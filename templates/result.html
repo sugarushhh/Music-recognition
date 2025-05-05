@@ -1,0 +1,173 @@
+{% extends 'base.html' %}
+
+{% block title %}第四步：分析结果 - Spotify音乐特征分析{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>第四步：分析结果</h2>
+    
+    <div class="alert alert-success">
+        分析完成！系统已成功分析两组歌曲的音乐特征差异
+    </div>
+    
+    {% if filtered_songs %}
+    <div class="filtered-songs">
+        <h3>差异较大的歌曲</h3>
+        <p>以下是与参考组特征差异较大的歌曲：</p>
+        
+        <ul class="song-list">
+            {% for song in filtered_songs %}
+            <li class="song-item">
+                <strong>{{ song }}</strong>
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2>特征差异分析</h2>
+    
+    <div class="tag-comparison">
+        <div class="tag-box">
+            <h3>参考组特征 (Tag A)</h3>
+            
+            {% if tag_a %}
+            <ul class="tag-list">
+                {% if tag_a.energy %}
+                <li class="tag-item">
+                    <span>能量水平:</span>
+                    <span>{{ tag_a.energy }}</span>
+                </li>
+                {% endif %}
+                
+                {% if tag_a.danceability %}
+                <li class="tag-item">
+                    <span>可舞性:</span>
+                    <span>{{ tag_a.danceability }}</span>
+                </li>
+                {% endif %}
+                
+                {% if tag_a.tempo %}
+                <li class="tag-item">
+                    <span>节奏:</span>
+                    <span>{{ tag_a.tempo }}</span>
+                </li>
+                {% endif %}
+                
+                {% if tag_a.style %}
+                <li class="tag-item">
+                    <span>风格:</span>
+                    <span>{{ tag_a.style }}</span>
+                </li>
+                {% endif %}
+                
+                {% if tag_a.mood %}
+                <li class="tag-item">
+                    <span>情绪:</span>
+                    <span>{{ tag_a.mood }}</span>
+                </li>
+                {% endif %}
+            </ul>
+            {% else %}
+            <p>未找到足够数据分析参考组特征</p>
+            {% endif %}
+        </div>
+        
+        <div class="tag-box">
+            <h3>筛选组特征 (Tag B)</h3>
+            
+            {% if tag_b %}
+            <ul class="tag-list">
+                {% if tag_b.energy %}
+                <li class="tag-item">
+                    <span>能量水平:</span>
+                    <span>{{ tag_b.energy }}</span>
+                </li>
+                {% endif %}
+                
+                {% if tag_b.danceability %}
+                <li class="tag-item">
+                    <span>可舞性:</span>
+                    <span>{{ tag_b.danceability }}</span>
+                </li>
+                {% endif %}
+                
+                {% if tag_b.tempo %}
+                <li class="tag-item">
+                    <span>节奏:</span>
+                    <span>{{ tag_b.tempo }}</span>
+                </li>
+                {% endif %}
+                
+                {% if tag_b.style %}
+                <li class="tag-item">
+                    <span>风格:</span>
+                    <span>{{ tag_b.style }}</span>
+                </li>
+                {% endif %}
+                
+                {% if tag_b.mood %}
+                <li class="tag-item">
+                    <span>情绪:</span>
+                    <span>{{ tag_b.mood }}</span>
+                </li>
+                {% endif %}
+            </ul>
+            {% else %}
+            <p>未找到足够数据分析筛选组特征</p>
+            {% endif %}
+        </div>
+    </div>
+    
+    {% if comparison and comparison.feature_diffs %}
+    <div class="feature-details">
+        <h3>详细特征差异</h3>
+        <table class="feature-table" style="width: 100%; border-collapse: collapse; margin-top: 1rem;">
+            <thead>
+                <tr>
+                    <th style="text-align: left; padding: 8px; border-bottom: 2px solid #ddd;">特征</th>
+                    <th style="text-align: center; padding: 8px; border-bottom: 2px solid #ddd;">参考组</th>
+                    <th style="text-align: center; padding: 8px; border-bottom: 2px solid #ddd;">筛选组</th>
+                    <th style="text-align: center; padding: 8px; border-bottom: 2px solid #ddd;">差异</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for feature, data in comparison.feature_diffs.items() %}
+                <tr class="{% if data.significant %}different{% endif %}">
+                    <td style="padding: 8px; border-bottom: 1px solid #eee;">{{ feature }}</td>
+                    <td style="text-align: center; padding: 8px; border-bottom: 1px solid #eee;">{{ data.tag_a }}</td>
+                    <td style="text-align: center; padding: 8px; border-bottom: 1px solid #eee;">{{ data.tag_b }}</td>
+                    <td style="text-align: center; padding: 8px; border-bottom: 1px solid #eee;">
+                        {{ data.diff }}
+                        {% if data.significant %}
+                        <span style="color: var(--warning-color); font-weight: bold;">*</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <p style="margin-top: 10px; font-size: 0.9em; color: #666;">* 标记的差异为显著差异（差值 > 0.2）</p>
+    </div>
+    {% endif %}
+    
+    <div class="actions">
+        <a href="{{ url_for('index') }}" class="btn">重新开始分析</a>
+    </div>
+</div>
+
+<div class="card">
+    <h2>分析说明</h2>
+    <p>本分析基于Spotify音频特征数据，包括以下参数：</p>
+    <ul>
+        <li><strong>能量水平 (Energy):</strong> 表示歌曲的能量感和活力程度</li>
+        <li><strong>可舞性 (Danceability):</strong> 反映歌曲是否适合跳舞</li>
+        <li><strong>节奏 (Tempo):</strong> 歌曲的速度</li>
+        <li><strong>风格 (Style):</strong> 基于声学、乐器和语音特征的风格分类</li>
+        <li><strong>情绪 (Mood):</strong> 基于音乐正负情绪的分类</li>
+    </ul>
+    <p>系统通过比较这些特征找出与参考组差异较大的歌曲，并生成特征标签以便理解两组音乐的主要差异。</p>
+</div>
+{% endblock %}

@@ -1,0 +1,85 @@
+{% extends 'base.html' %}
+
+{% block title %}第三步：审核筛选结果 - Spotify音乐特征分析{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>第二步结果</h2>
+    
+    {% if results %}
+    <div class="alert alert-success">
+        成功分析了 {{ results|selectattr('success')|list|length }} 首待筛选歌曲
+    </div>
+
+<div class="card">
+    <h2>使用说明</h2>
+    <ol>
+        <li>系统已根据音乐特征差异筛选出与参考组不同的歌曲</li>
+        <li>您可以查看筛选结果，决定是否接受</li>
+        <li>如果您接受筛选结果，系统将分析这些歌曲并生成特征概要</li>
+        <li>如果您不满意筛选结果，可以返回上一步重新选择歌曲</li>
+    </ol>
+</div>
+{% endblock %}    
+    <h3>待筛选歌曲列表</h3>
+    <ul class="song-list">
+        {% for song in results %}
+        <li class="song-item">
+            {% if song.success %}
+            <div>
+                <strong>{{ song.name }}</strong>
+                <div>{{ song.artists }}</div>
+            </div>
+            <span class="song-status success">✓ 已分析</span>
+            {% else %}
+            <div>
+                <strong>{{ song.name }}</strong>
+                <div class="song-status error">{{ song.error }}</div>
+            </div>
+            <span class="song-status error">✗ 失败</span>
+            {% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2>第三步：审核筛选结果</h2>
+    
+    <div class="alert {% if filtered_songs %}alert-success{% else %}alert-warning{% endif %}">
+        系统从 {{ total_songs }} 首歌曲中筛选出 {{ filtered_count }} 首差异较大的歌曲
+    </div>
+    
+    {% if filtered_songs %}
+    <div class="filtered-songs">
+        <h3>差异较大的歌曲</h3>
+        <p>以下是与参考组特征差异较大的歌曲：</p>
+        
+        <ul class="song-list">
+            {% for song in filtered_songs %}
+            <li class="song-item">
+                <strong>{{ song }}</strong>
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+    
+    <div class="actions">
+        <form action="{{ url_for('accept_results') }}" method="post">
+            <button type="submit" class="btn">接受筛选结果</button>
+        </form>
+        
+        <form action="{{ url_for('reject_results') }}" method="post">
+            <button type="submit" class="btn btn-secondary">重新筛选</button>
+        </form>
+    </div>
+    {% else %}
+    <p>没有找到差异较大的歌曲。您可以尝试输入更多不同风格的歌曲。</p>
+    
+    <div class="actions">
+        <form action="{{ url_for('reject_results') }}" method="post">
+            <button type="submit" class="btn">重新筛选</button>
+        </form>
+    </div>
+    {% endif %}

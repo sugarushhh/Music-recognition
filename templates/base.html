@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Spotify音乐特征分析{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    {% block extra_head %}{% endblock %}
+</head>
+<body>
+    <header>
+        <h1><span class="logo">Spotify</span> 音乐特征分析</h1>
+    </header>
+    
+    <div class="container">
+        <div class="step-indicator">
+            <div class="step {% if request.path == '/' or request.path == '/step1' %}active{% elif '/step2' in request.path or '/review' in request.path or '/result' in request.path %}completed{% endif %}">1</div>
+            <div class="step {% if '/step2' in request.path %}active{% elif '/review' in request.path or '/result' in request.path %}completed{% endif %}">2</div>
+            <div class="step {% if '/review' in request.path %}active{% elif '/result' in request.path %}completed{% endif %}">3</div>
+            <div class="step {% if '/result' in request.path %}active{% endif %}">4</div>
+        </div>
+        
+        {% block content %}{% endblock %}
+    </div>
+    
+    <footer>
+        <p>&copy; 2025 Spotify音乐特征分析工具</p>
+    </footer>
+    
+    {% block scripts %}{% endblock %}
+</body>
+</html>

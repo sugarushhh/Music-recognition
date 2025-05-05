@@ -1,0 +1,32 @@
+{% extends 'base.html' %}
+
+{% block title %}第一步：输入参考歌曲 - Spotify音乐特征分析{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>第一步：输入参考歌曲列表</h2>
+    <p>请在下方输入您想要分析的第一组歌曲名称（每行一首），系统将收集这些歌曲的特征数据作为参考标准。</p>
+    
+    <form action="{{ url_for('step1') }}" method="post">
+        <div class="form-group">
+            <label for="songs">歌曲列表（每行一首）:</label>
+            <textarea id="songs" name="songs" placeholder="例如:
+Shape of You - Ed Sheeran
+Blinding Lights - The Weeknd
+Bad Guy - Billie Eilish" required></textarea>
+        </div>
+        
+        <button type="submit" class="btn">分析并继续</button>
+    </form>
+</div>
+
+<div class="card">
+    <h2>使用说明</h2>
+    <ol>
+        <li>在上方文本框中输入您想要作为参考的歌曲列表（每行一首）</li>
+        <li>系统将自动搜索这些歌曲并收集它们的音频特征</li>
+        <li>这些特征将被用作参考标准，以便在下一步中筛选差异较大的歌曲</li>
+        <li>建议输入风格相似的歌曲作为参考组，以便得到更精确的差异分析</li>
+    </ol>
+</div>
+{% endblock %}
