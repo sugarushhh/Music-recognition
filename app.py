@@ -15,41 +15,68 @@ app.secret_key = os.urandom(24)
 # Spotify API 配置
 CLIENT_ID = '3395bd6dd71448e599805be8255c2437'
 CLIENT_SECRET = '66431b32b0b04f078991a1486b5b9eb5'
-REDIRECT_URI = 'https://two61272-s-project.onrender.com
-sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(client_id=CLIENT_ID, client_secret=CLIENT_SECRET))
+REDIRECT_URI = 'https://two61272-s-project.onrender.com'
+
+# 使用与Spotify开发者控制台设置匹配的重定向URL
+try:
+    client_credentials_manager = SpotifyClientCredentials(
+        client_id=CLIENT_ID, 
+        client_secret=CLIENT_SECRET
+    )
+    sp = spotipy.Spotify(
+        auth_manager=client_credentials_manager, 
+        requests_timeout=20
+    )
+    print("Spotify客户端初始化成功")
+except Exception as e:
+    print(f"Spotify客户端初始化错误: {e}")
+    sp = None
 
 # 保存用户数据的全局变量
 audio_features_map = {}
 tag_A = {}
 tag_B = {}
 
+# 添加模拟数据，当API失败时使用
+MOCK_AUDIO_FEATURES = {
+    'danceability': 0.7,
+    'energy': 0.8,
+    'key': 5,
+    'loudness': -5.0,
+    'mode': 1,
+    'speechiness': 0.1,
+    'acousticness': 0.2,
+    'instrumentalness': 0.01,
+    'liveness': 0.15,
+    'valence': 0.6,
+    'tempo': 120.0
+}
+
+def is_api_available():
+    """检查Spotify API是否可用"""
+    if sp is None:
+        return False
+    try:
+        # 尝试简单的API调用来检查连接
+        sp.search(q='test', limit=1)
+        return True
+    except Exception as e:
+        print(f"API不可用: {e}")
+        return False
+
 @app.route('/')
 def index():
     return render_template('step1.html')
 
-@app.route('/step1', methods=['POST'])
-def step1():
-    if request.method == 'POST':
-        # 获取用户输入的歌曲名单
-        songs_text = request.form.get('songs')
-        songs_list = [song.strip() for song in songs_text.split('\n') if song.strip()]
-        
-        # 获取歌曲特征
-        results = []
-        for song in songs_list:
-            try:
-                # 搜索歌曲
-                search_results = sp.search(q=song, type='track', limit=1)
-                if search_results['tracks']['items']:
-                    track = search_results['tracks']['items'][0]
-                    track_id = track['id']
-                    
-                    # 获取音频特征
-                    audio_features = sp.audio_features(track_id)[0]
-                    
-                    # 保存到全局映射
-                    if audio_features:
-                        audio_features_map[song] = {
+@app.route('/callback')
+def callback():
+    """处理Spotify授权回调"""
+    # 这个路由是为了处理Spotify OAuth回调
+    # 对于使用客户端凭证流程，实际上不需要处理回调
+    # 但为了与您在Spotify开发者控制台中设置的重定向URL保持一致，我们添加了这个路由
+    return redirect(url_for('index'))
+
+_features_map[song] = {
                             'id': track_id,
                             'name': track['name'],
                             'artists': ', '.join([artist['name'] for artist in track['artists']]),
