@@ -15,8 +15,7 @@ app.secret_key = os.urandom(24)
 # Spotify API 配置
 CLIENT_ID = '3395bd6dd71448e599805be8255c2437'
 CLIENT_SECRET = '66431b32b0b04f078991a1486b5b9eb5'
-REDIRECT_URI = 'https://two61272-s-project.onrender.com/callback'
-
+REDIRECT_URI = 'https://two61272-s-project.onrender.com
 sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(client_id=CLIENT_ID, client_secret=CLIENT_SECRET))
 
 # 保存用户数据的全局变量
