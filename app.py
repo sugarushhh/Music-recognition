@@ -8,6 +8,9 @@ from sklearn.metrics.pairwise import cosine_similarity
 import os
 import json
 from collections import Counter
+import time
+import requests
+from requests.exceptions import RequestException, Timeout, ConnectionError
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
@@ -17,6 +20,10 @@ CLIENT_ID = '3395bd6dd71448e599805be8255c2437'
 CLIENT_SECRET = '66431b32b0b04f078991a1486b5b9eb5'
 REDIRECT_URI = 'https://two61272-s-project.onrender.com'
 
+# 请求重试配置
+MAX_RETRIES = 3
+RETRY_DELAY = 2  # 重试间隔秒数
+
 # 使用与Spotify开发者控制台设置匹配的重定向URL
 try:
     client_credentials_manager = SpotifyClientCredentials(
@@ -25,7 +32,9 @@ try:
     )
     sp = spotipy.Spotify(
         auth_manager=client_credentials_manager, 
-        requests_timeout=20
+        requests_timeout=30,  # 增加超时时间
+        retries=MAX_RETRIES,  # 设置重试次数
+        backoff_factor=1
     )
     print("Spotify客户端初始化成功")
 except Exception as e:
@@ -37,7 +46,21 @@ audio_features_map = {}
 tag_A = {}
 tag_B = {}
 
-# 已删除API失败时的模拟数据功能
+def safe_api_call(func, *args, **kwargs):
+    """安全地调用API函数，处理错误和重试"""
+    for attempt in range(MAX_RETRIES):
+        try:
+            return func(*args, **kwargs)
+        except (ConnectionError, Timeout, RequestException) as e:
+            if attempt < MAX_RETRIES - 1:
+                print(f"API调用失败，正在重试 ({attempt+1}/{MAX_RETRIES}): {e}")
+                time.sleep(RETRY_DELAY)
+            else:
+                print(f"API调用重试多次后失败: {e}")
+                raise
+        except Exception as e:
+            print(f"API调用其他错误: {e}")
+            raise
 
 def is_api_available():
     """检查Spotify API是否可用"""
@@ -45,7 +68,7 @@ def is_api_available():
         return False
     try:
         # 尝试简单的API调用来检查连接
-        sp.search(q='test', limit=1)
+        safe_api_call(sp.search, q='test', limit=1)
         return True
     except Exception as e:
         print(f"API不可用: {e}")
@@ -74,22 +97,28 @@ def step1():
         results = []
         for song in songs_list:
             try:
+                # 检查API可用性
+                if not is_api_available():
+                    results.append({'name': song, 'success': False, 'error': 'Spotify API暂时不可用'})
+                    continue
+                
                 # 搜索歌曲
-                search_results = sp.search(q=song, type='track', limit=1)
+                search_results = safe_api_call(sp.search, q=song, type='track', limit=1)
                 if search_results['tracks']['items']:
                     track = search_results['tracks']['items'][0]
                     track_id = track['id']
                     
-                    # 获取音频特征
-                    audio_features = sp.audio_features(track_id)[0]
+                    # 获取音频特征之前添加短暂延迟，避免请求过快
+                    time.sleep(0.2)
                     
-                    # 保存到全局映射
-                    if audio_features:
+                    # 获取音频特征
+                    audio_features = safe_api_call(sp.audio_features, track_id)
+                    if audio_features and audio_features[0]:
                         audio_features_map[song] = {
                             'id': track_id,
                             'name': track['name'],
                             'artists': ', '.join([artist['name'] for artist in track['artists']]),
-                            'features': audio_features
+                            'features': audio_features[0]
                         }
                         
                         results.append({
@@ -106,7 +135,11 @@ def step1():
         
         # 生成tag_A
         global tag_A
-        tag_A = analyze_music_features([audio_features_map[song]['features'] for song in songs_list if song in audio_features_map])
+        valid_features = [audio_features_map[song]['features'] for song in songs_list if song in audio_features_map]
+        if valid_features:
+            tag_A = analyze_music_features(valid_features)
+        else:
+            tag_A = {}
         
         session['songs_list_1'] = songs_list
         session['results_1'] = results
@@ -124,22 +157,28 @@ def step2():
         results = []
         for song in songs_list:
             try:
+                # 检查API可用性
+                if not is_api_available():
+                    results.append({'name': song, 'success': False, 'error': 'Spotify API暂时不可用'})
+                    continue
+                    
                 # 搜索歌曲
-                search_results = sp.search(q=song, type='track', limit=1)
+                search_results = safe_api_call(sp.search, q=song, type='track', limit=1)
                 if search_results['tracks']['items']:
                     track = search_results['tracks']['items'][0]
                     track_id = track['id']
                     
-                    # 获取音频特征
-                    audio_features = sp.audio_features(track_id)[0]
+                    # 获取音频特征之前添加短暂延迟
+                    time.sleep(0.2)
                     
-                    # 保存到全局映射
-                    if audio_features:
+                    # 获取音频特征
+                    audio_features = safe_api_call(sp.audio_features, track_id)
+                    if audio_features and audio_features[0]:
                         audio_features_map[song] = {
                             'id': track_id,
                             'name': track['name'],
                             'artists': ', '.join([artist['name'] for artist in track['artists']]),
-                            'features': audio_features
+                            'features': audio_features[0]
                         }
                         
                         results.append({
@@ -158,7 +197,7 @@ def step2():
         session['results_2'] = results
         
         # 筛选差异较大的歌曲
-        filtered_songs = filter_dissimilar_songs(session['songs_list_1'], songs_list)
+        filtered_songs = filter_dissimilar_songs(session.get('songs_list_1', []), songs_list)
         session['filtered_songs'] = filtered_songs
         
         return render_template('review.html', 
@@ -174,7 +213,11 @@ def accept_results():
     
     # 生成tag_B
     global tag_B
-    tag_B = analyze_music_features([audio_features_map[song]['features'] for song in filtered_songs if song in audio_features_map])
+    valid_features = [audio_features_map[song]['features'] for song in filtered_songs if song in audio_features_map]
+    if valid_features:
+        tag_B = analyze_music_features(valid_features)
+    else:
+        tag_B = {}
     
     # 比较tag_A和tag_B
     comparison = compare_tags(tag_A, tag_B)
@@ -324,6 +367,12 @@ def compare_tags(tag_a, tag_b):
         comparison['feature_diffs'] = feature_diffs
     
     return comparison
+
+@app.route('/api_status', methods=['GET'])
+def api_status():
+    """返回API状态的端点，可用于前端检测API是否可用"""
+    status = is_api_available()
+    return jsonify({'status': 'available' if status else 'unavailable'})
 
 if __name__ == '__main__':
     app.run(debug=True)
