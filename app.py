@@ -1,6 +1,5 @@
-from flask import Flask, render_template, request, redirect, url_for, session, jsonify
-import spotipy
-from spotipy.oauth2 import SpotifyClientCredentials
+from flask import Flask, render_template, request, jsonify, session
+import requests
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler
@@ -9,251 +8,204 @@ import os
 import json
 from collections import Counter
 import time
-import requests
-from requests.exceptions import RequestException, Timeout, ConnectionError
+import html
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
-# Spotify API 配置
-CLIENT_ID = '3395bd6dd71448e599805be8255c2437'
-CLIENT_SECRET = '66431b32b0b04f078991a1486b5b9eb5'
-REDIRECT_URI = 'https://two61272-s-project.onrender.com'
+# Last.fm API configuration
+API_KEY = 'ac92a37f42f55eee4a5fcd7321e752fe'
+API_SECRET = '051d35a38d4f1bfada0be98cf806ce60'
+API_BASE_URL = 'http://ws.audioscrobbler.com/2.0/'
 
-# 请求重试配置
+# Request retry configuration
 MAX_RETRIES = 3
-RETRY_DELAY = 2  # 重试间隔秒数
+RETRY_DELAY = 2  # seconds between retries
 
-# 使用与Spotify开发者控制台设置匹配的重定向URL
-try:
-    client_credentials_manager = SpotifyClientCredentials(
-        client_id=CLIENT_ID, 
-        client_secret=CLIENT_SECRET
-    )
-    sp = spotipy.Spotify(
-        auth_manager=client_credentials_manager, 
-        requests_timeout=30,  # 增加超时时间
-        retries=MAX_RETRIES,  # 设置重试次数
-        backoff_factor=1
-    )
-    print("Spotify客户端初始化成功")
-except Exception as e:
-    print(f"Spotify客户端初始化错误: {e}")
-    sp = None
-
-# 保存用户数据的全局变量
-audio_features_map = {}
+# Global variables to store user data
+track_features_map = {}
 tag_A = {}
 tag_B = {}
 
-def safe_api_call(func, *args, **kwargs):
-    """安全地调用API函数，处理错误和重试"""
-    for attempt in range(MAX_RETRIES):
+def safe_api_call(method, params, retries=MAX_RETRIES):
+    """Safely call the Last.fm API with error handling and retries"""
+    params['api_key'] = API_KEY
+    params['format'] = 'json'
+    params['method'] = method
+    
+    for attempt in range(retries):
         try:
-            return func(*args, **kwargs)
-        except (ConnectionError, Timeout, RequestException) as e:
-            if attempt < MAX_RETRIES - 1:
-                print(f"API调用失败，正在重试 ({attempt+1}/{MAX_RETRIES}): {e}")
+            response = requests.get(API_BASE_URL, params=params, timeout=15)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            if attempt < retries - 1:
+                print(f"API call failed, retrying ({attempt+1}/{retries}): {e}")
                 time.sleep(RETRY_DELAY)
             else:
-                print(f"API调用重试多次后失败: {e}")
+                print(f"API call failed after multiple retries: {e}")
                 raise
         except Exception as e:
-            print(f"API调用其他错误: {e}")
+            print(f"Other API error: {e}")
             raise
 
 def is_api_available():
-    """检查Spotify API是否可用"""
-    if sp is None:
-        return False
+    """Check if Last.fm API is available"""
     try:
-        # 尝试简单的API调用来检查连接
-        safe_api_call(sp.search, q='test', limit=1)
+        # Try a simple API call to check connection
+        result = safe_api_call('chart.getTopArtists', {'limit': 1})
         return True
     except Exception as e:
-        print(f"API不可用: {e}")
+        print(f"API unavailable: {e}")
         return False
 
-@app.route('/')
-def index():
-    return render_template('step1.html')
+def get_track_info(track_name, artist_name=None):
+    """Get track information from Last.fm API"""
+    params = {'track': track_name}
+    if artist_name:
+        params['artist'] = artist_name
+        
+    try:
+        result = safe_api_call('track.getInfo', params)
+        return result
+    except Exception as e:
+        print(f"Error getting track info: {e}")
+        return None
 
-@app.route('/callback')
-def callback():
-    """处理Spotify授权回调"""
-    # 这个路由是为了处理Spotify OAuth回调
-    # 对于使用客户端凭证流程，实际上不需要处理回调
-    # 但为了与您在Spotify开发者控制台中设置的重定向URL保持一致，我们添加了这个路由
-    return redirect(url_for('index'))
+def search_track(track_name):
+    """Search for tracks on Last.fm"""
+    try:
+        result = safe_api_call('track.search', {'track': track_name, 'limit': 5})
+        
+        if 'results' in result and 'trackmatches' in result['results'] and 'track' in result['results']['trackmatches']:
+            tracks = result['results']['trackmatches']['track']
+            # Last.fm might return a single dict for one result, convert to list
+            if isinstance(tracks, dict):
+                tracks = [tracks]
+            return tracks
+        return []
+    except Exception as e:
+        print(f"Error searching track: {e}")
+        return []
 
-@app.route('/step1', methods=['POST'])
-def step1():
-    if request.method == 'POST':
-        # 获取用户输入的歌曲名单
-        songs_text = request.form.get('songs')
-        songs_list = [song.strip() for song in songs_text.split('\n') if song.strip()]
+def get_track_tags(track_name, artist_name):
+    """Get tags for a track from Last.fm API"""
+    try:
+        result = safe_api_call('track.getTopTags', {'track': track_name, 'artist': artist_name})
         
-        # 获取歌曲特征
-        results = []
-        for song in songs_list:
-            try:
-                # 检查API可用性
-                if not is_api_available():
-                    results.append({'name': song, 'success': False, 'error': 'Spotify API暂时不可用'})
-                    continue
-                
-                # 搜索歌曲
-                search_results = safe_api_call(sp.search, q=song, type='track', limit=1)
-                if search_results['tracks']['items']:
-                    track = search_results['tracks']['items'][0]
-                    track_id = track['id']
-                    
-                    # 获取音频特征之前添加短暂延迟，避免请求过快
-                    time.sleep(0.2)
-                    
-                    # 获取音频特征
-                    audio_features = safe_api_call(sp.audio_features, track_id)
-                    if audio_features and audio_features[0]:
-                        audio_features_map[song] = {
-                            'id': track_id,
-                            'name': track['name'],
-                            'artists': ', '.join([artist['name'] for artist in track['artists']]),
-                            'features': audio_features[0]
-                        }
-                        
-                        results.append({
-                            'name': track['name'],
-                            'artists': ', '.join([artist['name'] for artist in track['artists']]),
-                            'success': True
-                        })
-                    else:
-                        results.append({'name': song, 'success': False, 'error': '无法获取音频特征'})
-                else:
-                    results.append({'name': song, 'success': False, 'error': '找不到歌曲'})
-            except Exception as e:
-                results.append({'name': song, 'success': False, 'error': str(e)})
-        
-        # 生成tag_A
-        global tag_A
-        valid_features = [audio_features_map[song]['features'] for song in songs_list if song in audio_features_map]
-        if valid_features:
-            tag_A = analyze_music_features(valid_features)
-        else:
-            tag_A = {}
-        
-        session['songs_list_1'] = songs_list
-        session['results_1'] = results
-        
-        return render_template('step2.html', results=results)
+        if 'toptags' in result and 'tag' in result['toptags']:
+            tags = result['toptags']['tag']
+            # Last.fm might return a single dict for one tag, convert to list
+            if isinstance(tags, dict):
+                tags = [tags]
+            return tags
+        return []
+    except Exception as e:
+        print(f"Error getting track tags: {e}")
+        return []
 
-@app.route('/step2', methods=['POST'])
-def step2():
-    if request.method == 'POST':
-        # 获取用户输入的第二组歌曲名单
-        songs_text = request.form.get('songs')
-        songs_list = [song.strip() for song in songs_text.split('\n') if song.strip()]
+def get_similar_tracks(track_name, artist_name):
+    """Get similar tracks from Last.fm API"""
+    try:
+        result = safe_api_call('track.getSimilar', {'track': track_name, 'artist': artist_name, 'limit': 10})
         
-        # 获取歌曲特征
-        results = []
-        for song in songs_list:
-            try:
-                # 检查API可用性
-                if not is_api_available():
-                    results.append({'name': song, 'success': False, 'error': 'Spotify API暂时不可用'})
-                    continue
-                    
-                # 搜索歌曲
-                search_results = safe_api_call(sp.search, q=song, type='track', limit=1)
-                if search_results['tracks']['items']:
-                    track = search_results['tracks']['items'][0]
-                    track_id = track['id']
-                    
-                    # 获取音频特征之前添加短暂延迟
-                    time.sleep(0.2)
-                    
-                    # 获取音频特征
-                    audio_features = safe_api_call(sp.audio_features, track_id)
-                    if audio_features and audio_features[0]:
-                        audio_features_map[song] = {
-                            'id': track_id,
-                            'name': track['name'],
-                            'artists': ', '.join([artist['name'] for artist in track['artists']]),
-                            'features': audio_features[0]
-                        }
-                        
-                        results.append({
-                            'name': track['name'],
-                            'artists': ', '.join([artist['name'] for artist in track['artists']]),
-                            'success': True
-                        })
-                    else:
-                        results.append({'name': song, 'success': False, 'error': '无法获取音频特征'})
-                else:
-                    results.append({'name': song, 'success': False, 'error': '找不到歌曲'})
-            except Exception as e:
-                results.append({'name': song, 'success': False, 'error': str(e)})
-        
-        session['songs_list_2'] = songs_list
-        session['results_2'] = results
-        
-        # 筛选差异较大的歌曲
-        filtered_songs = filter_dissimilar_songs(session.get('songs_list_1', []), songs_list)
-        session['filtered_songs'] = filtered_songs
-        
-        return render_template('review.html', 
-                               results=results, 
-                               filtered_songs=filtered_songs, 
-                               total_songs=len(songs_list),
-                               filtered_count=len(filtered_songs))
+        if 'similartracks' in result and 'track' in result['similartracks']:
+            similar_tracks = result['similartracks']['track']
+            # Last.fm might return a single dict for one result, convert to list
+            if isinstance(similar_tracks, dict):
+                similar_tracks = [similar_tracks]
+            return similar_tracks
+        return []
+    except Exception as e:
+        print(f"Error getting similar tracks: {e}")
+        return []
 
-@app.route('/accept_results', methods=['POST'])
-def accept_results():
-    # 用户接受筛选结果
-    filtered_songs = session.get('filtered_songs', [])
+def extract_track_features(track_info):
+    """Extract and normalize musical features from track information and tags"""
+    if not track_info:
+        return None
     
-    # 生成tag_B
-    global tag_B
-    valid_features = [audio_features_map[song]['features'] for song in filtered_songs if song in audio_features_map]
-    if valid_features:
-        tag_B = analyze_music_features(valid_features)
-    else:
-        tag_B = {}
+    # Get track tags
+    artist_name = track_info.get('artist', {}).get('name', '')
+    track_name = track_info.get('name', '')
     
-    # 比较tag_A和tag_B
-    comparison = compare_tags(tag_A, tag_B)
+    tags = get_track_tags(track_name, artist_name)
     
-    return render_template('result.html', 
-                           filtered_songs=filtered_songs,
-                           tag_a=tag_A,
-                           tag_b=tag_B,
-                           comparison=comparison)
-
-@app.route('/reject_results', methods=['POST'])
-def reject_results():
-    # 用户拒绝筛选结果，返回第二步
-    return render_template('step2.html', results=session.get('results_2', []))
+    # Initialize features with default values
+    features = {
+        'danceability': 0.5,
+        'energy': 0.5,
+        'acousticness': 0.5,
+        'instrumentalness': 0.5,
+        'liveness': 0.5,
+        'valence': 0.5,
+        'speechiness': 0.5,
+        'tempo': 120,  # Default tempo
+    }
+    
+    # Map common tags to musical features
+    tag_mapping = {
+        'dance': ('danceability', 0.8),
+        'danceable': ('danceability', 0.8),
+        'edm': ('danceability', 0.9),
+        'energetic': ('energy', 0.9),
+        'high energy': ('energy', 0.9),
+        'powerful': ('energy', 0.8),
+        'calm': ('energy', 0.2),
+        'chill': ('energy', 0.3),
+        'relaxing': ('energy', 0.2),
+        'acoustic': ('acousticness', 0.9),
+        'instrumental': ('instrumentalness', 0.9),
+        'live': ('liveness', 0.9),
+        'happy': ('valence', 0.9),
+        'sad': ('valence', 0.2),
+        'melancholy': ('valence', 0.3),
+        'rap': ('speechiness', 0.9),
+        'spoken word': ('speechiness', 0.9),
+        'fast': ('tempo', 160),
+        'slow': ('tempo', 80),
+    }
+    
+    # Extract tag names and count
+    tag_count = 0
+    if tags:
+        for tag in tags:
+            tag_name = tag.get('name', '').lower()
+            tag_count += 1
+            
+            # Map tag to feature
+            for keyword, (feature, value) in tag_mapping.items():
+                if keyword in tag_name:
+                    features[feature] = value
+    
+    # Include track listeners and playcount as popularity metrics
+    features['popularity'] = float(track_info.get('listeners', 0)) / 1000000  # Normalize by million
+    
+    # If duration is available, convert to seconds
+    if 'duration' in track_info:
+        try:
+            features['duration'] = int(track_info['duration']) / 1000  # Convert ms to seconds
+        except (ValueError, TypeError):
+            features['duration'] = 0
+    
+    return features
 
 def analyze_music_features(features_list):
-    """分析一组歌曲的音频特征，生成标签"""
+    """Analyze a group of tracks' features and generate tags"""
     if not features_list:
         return {}
     
-    # 提取主要特征
-    feature_keys = ['danceability', 'energy', 'key', 'loudness', 'mode', 
-                    'speechiness', 'acousticness', 'instrumentalness', 
-                    'liveness', 'valence', 'tempo']
-    
-    # 计算平均值
+    # Calculate averages
     avg_features = {}
-    for key in feature_keys:
+    for key in ['danceability', 'energy', 'acousticness', 'instrumentalness', 
+                'liveness', 'valence', 'speechiness', 'tempo', 'popularity']:
         values = [features[key] for features in features_list if key in features]
         if values:
             avg_features[key] = sum(values) / len(values)
     
-    # 确定音乐风格特征
+    # Generate descriptive tags
     tags = {}
     
-    # 根据平均特征生成描述性标签
     if avg_features['energy'] > 0.7:
         tags['energy'] = 'high'
     elif avg_features['energy'] < 0.4:
@@ -289,21 +241,28 @@ def analyze_music_features(features_list):
     else:
         tags['mood'] = 'neutral'
     
-    # 添加其他特征
+    if avg_features['popularity'] > 0.5:
+        tags['popularity'] = 'mainstream'
+    elif avg_features['popularity'] < 0.1:
+        tags['popularity'] = 'niche'
+    else:
+        tags['popularity'] = 'moderate'
+    
+    # Add average features
     tags['avg_features'] = avg_features
     
     return tags
 
 def filter_dissimilar_songs(reference_songs, candidate_songs):
-    """筛选出与参考歌曲组特征差异较大的歌曲"""
+    """Filter tracks that are significantly different from the reference group"""
     if not reference_songs or not candidate_songs:
         return []
     
-    # 获取参考组的特征向量
+    # Get reference group feature vectors
     reference_features = []
     for song in reference_songs:
-        if song in audio_features_map:
-            features = audio_features_map[song]['features']
+        if song in track_features_map:
+            features = track_features_map[song]['features']
             feature_vector = [
                 features['danceability'], features['energy'], 
                 features['speechiness'], features['acousticness'], 
@@ -315,14 +274,14 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
     if not reference_features:
         return []
     
-    # 计算参考组的平均特征向量
+    # Calculate reference group average vector
     reference_avg = np.mean(reference_features, axis=0)
     
-    # 计算每个候选歌曲与参考组的相似度
+    # Calculate similarity for each candidate song
     dissimilar_songs = []
     for song in candidate_songs:
-        if song in audio_features_map:
-            features = audio_features_map[song]['features']
+        if song in track_features_map:
+            features = track_features_map[song]['features']
             feature_vector = [
                 features['danceability'], features['energy'], 
                 features['speechiness'], features['acousticness'], 
@@ -330,21 +289,21 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
                 features['valence']
             ]
             
-            # 计算欧氏距离
+            # Calculate Euclidean distance
             distance = np.linalg.norm(np.array(feature_vector) - reference_avg)
             
-            # 如果距离大于阈值，认为是差异较大的歌曲
+            # If distance exceeds threshold, consider it significantly different
             if distance > 0.8:
                 dissimilar_songs.append(song)
     
     return dissimilar_songs
 
 def compare_tags(tag_a, tag_b):
-    """比较两组标签的差异"""
+    """Compare differences between two tag sets"""
     comparison = {}
     
-    # 比较基本标签
-    for key in ['energy', 'danceability', 'tempo', 'style', 'mood']:
+    # Compare basic tags
+    for key in ['energy', 'danceability', 'tempo', 'style', 'mood', 'popularity']:
         if key in tag_a and key in tag_b:
             comparison[key] = {
                 'tag_a': tag_a[key],
@@ -352,7 +311,7 @@ def compare_tags(tag_a, tag_b):
                 'different': tag_a[key] != tag_b[key]
             }
     
-    # 比较平均特征值
+    # Compare average feature values
     if 'avg_features' in tag_a and 'avg_features' in tag_b:
         feature_diffs = {}
         for feature, value_a in tag_a['avg_features'].items():
@@ -362,17 +321,165 @@ def compare_tags(tag_a, tag_b):
                     'tag_a': round(value_a, 2),
                     'tag_b': round(tag_b['avg_features'][feature], 2),
                     'diff': round(diff, 2),
-                    'significant': diff > 0.2  # 如果差异大于0.2，认为是显著差异
+                    'significant': diff > 0.2  # Consider difference significant if > 0.2
                 }
         comparison['feature_diffs'] = feature_diffs
     
     return comparison
 
-@app.route('/api_status', methods=['GET'])
+@app.route('/')
+def index():
+    """Serve the single page application"""
+    return render_template('index.html')
+
+@app.route('/api/status', methods=['GET'])
 def api_status():
-    """返回API状态的端点，可用于前端检测API是否可用"""
+    """Return API availability status"""
     status = is_api_available()
     return jsonify({'status': 'available' if status else 'unavailable'})
+
+@app.route('/api/search_track', methods=['POST'])
+def api_search_track():
+    """Search for tracks and return results"""
+    query = request.json.get('query', '')
+    if not query:
+        return jsonify({'success': False, 'error': 'No search query provided'})
+    
+    try:
+        tracks = search_track(query)
+        results = []
+        
+        for track in tracks:
+            track_name = track.get('name', '')
+            artist_name = track.get('artist', '')
+            
+            results.append({
+                'name': track_name,
+                'artist': artist_name,
+                'id': f"{artist_name}:{track_name}"  # Create a unique ID
+            })
+        
+        return jsonify({'success': True, 'results': results})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/process_track', methods=['POST'])
+def api_process_track():
+    """Process a track and extract its features"""
+    track_name = request.json.get('track', '')
+    artist_name = request.json.get('artist', '')
+    song_key = request.json.get('id', '')
+    
+    if not track_name or not artist_name:
+        return jsonify({'success': False, 'error': 'Track and artist required'})
+    
+    try:
+        # Get detailed track info
+        track_info = get_track_info(track_name, artist_name)
+        
+        if not track_info or 'track' not in track_info:
+            return jsonify({'success': False, 'error': 'Track not found'})
+        
+        # Extract features
+        features = extract_track_features(track_info['track'])
+        
+        if not features:
+            return jsonify({'success': False, 'error': 'Failed to extract features'})
+        
+        # Store in global map
+        track_features_map[song_key] = {
+            'name': track_name,
+            'artist': artist_name,
+            'features': features
+        }
+        
+        return jsonify({
+            'success': True, 
+            'name': track_name,
+            'artist': artist_name,
+            'features': features
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/analyze_group', methods=['POST'])
+def api_analyze_group():
+    """Analyze a group of tracks and generate tags"""
+    group_id = request.json.get('group_id', '')
+    song_keys = request.json.get('songs', [])
+    
+    if not song_keys:
+        return jsonify({'success': False, 'error': 'No songs provided'})
+    
+    try:
+        # Get features for valid songs
+        valid_features = [track_features_map[key]['features'] for key in song_keys if key in track_features_map]
+        
+        if not valid_features:
+            return jsonify({'success': False, 'error': 'No valid songs found'})
+        
+        # Generate tags
+        tags = analyze_music_features(valid_features)
+        
+        # Store tags globally
+        if group_id == 'A':
+            global tag_A
+            tag_A = tags
+        elif group_id == 'B':
+            global tag_B
+            tag_B = tags
+        
+        return jsonify({'success': True, 'tags': tags})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/filter_songs', methods=['POST'])
+def api_filter_songs():
+    """Filter dissimilar songs between two groups"""
+    group_a_songs = request.json.get('group_a', [])
+    group_b_songs = request.json.get('group_b', [])
+    
+    if not group_a_songs or not group_b_songs:
+        return jsonify({'success': False, 'error': 'Both song groups required'})
+    
+    try:
+        # Filter dissimilar songs
+        filtered_songs = filter_dissimilar_songs(group_a_songs, group_b_songs)
+        
+        # Get detailed info for filtered songs
+        filtered_details = []
+        for song_key in filtered_songs:
+            if song_key in track_features_map:
+                filtered_details.append({
+                    'id': song_key,
+                    'name': track_features_map[song_key]['name'],
+                    'artist': track_features_map[song_key]['artist']
+                })
+        
+        return jsonify({
+            'success': True, 
+            'filtered_songs': filtered_details,
+            'total_count': len(group_b_songs),
+            'filtered_count': len(filtered_songs)
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/compare_groups', methods=['POST'])
+def api_compare_groups():
+    """Compare two groups of songs and their tags"""
+    try:
+        # Compare tag_A and tag_B
+        comparison = compare_tags(tag_A, tag_B)
+        
+        return jsonify({
+            'success': True,
+            'tag_a': tag_A,
+            'tag_b': tag_B,
+            'comparison': comparison
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
 
 if __name__ == '__main__':
     app.run(debug=True)
