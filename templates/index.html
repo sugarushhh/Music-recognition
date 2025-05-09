@@ -331,15 +331,21 @@
                         },
                         body: JSON.stringify({ query: query })
                     })
-                    .then(response => response.json())
-                    .then(data => {
+                    .then(async response => {
+                        let data;
+                        try {
+                            data = await response.json();
+                        } catch (e) {
+                            hideLoading();
+                            showError('服务器返回格式错误，无法解析。');
+                            console.error('JSON解析失败', e);
+                            return;
+                        }
                         hideLoading();
-                        
                         if (!data.success) {
                             showError(data.error || 'Failed to search tracks.');
                             return;
                         }
-                        
                         displaySearchResults(data.results, groupId, searchResults);
                     })
                     .catch(error => {
