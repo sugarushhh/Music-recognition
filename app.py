@@ -349,7 +349,7 @@ def api_search_track():
         tracks = search_track(query)
         results = []
         
-        for track in tracks:
+        for track in tracks[:5]:  # 只取前5个
             track_name = track.get('name', '')
             artist_name = track.get('artist', '')
             

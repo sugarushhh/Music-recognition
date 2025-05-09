@@ -751,18 +751,25 @@
                 
                 document.getElementById('filter-results').style.display = 'block';
             }
-        });
-    </script>
-</body>
-</html>
+
             function filterDissimilarSongs() {
+                // 防止重复点击
+                const filterBtn = document.getElementById('filter-btn');
+                filterBtn.disabled = true;
+
                 if (!groupA.analyzed || !groupB.analyzed) {
-                    showError('Please analyze both groups first.');
+                    showError('请先分析两个分组。');
+                    filterBtn.disabled = false;
                     return;
                 }
-                
-                showLoading('Finding dissimilar songs...');
-                
+                if (groupA.songs.length === 0 || groupB.songs.length === 0) {
+                    showError('两个分组都需要有歌曲才能筛选。');
+                    filterBtn.disabled = false;
+                    return;
+                }
+
+                showLoading('正在查找差异较大的歌曲...');
+
                 fetch('/api/filter_songs', {
                     method: 'POST',
                     headers: {
@@ -776,43 +783,54 @@
                 .then(response => response.json())
                 .then(data => {
                     hideLoading();
-                    
+                    filterBtn.disabled = false;
+
                     if (!data.success) {
-                        showError(data.error || 'Failed to filter songs.');
+                        showError(data.error || '筛选失败。');
+                        console.error('筛选失败返回：', data);
                         return;
                     }
-                    
+
                     displayFilteredSongs(data);
+                    document.getElementById('filter-results').style.display = 'block';
                 })
                 .catch(error => {
                     hideLoading();
-                    showError('An error occurred while filtering songs. Please try again.');
-                    console.error(error);
+                    filterBtn.disabled = false;
+                    showError('筛选过程中发生错误，请重试。');
+                    console.error('筛选异常：', error);
                 });
             }
-            
+
             function displayFilteredSongs(data) {
                 const filteredSongsList = document.getElementById('filtered-songs-list');
                 filteredSongsList.innerHTML = '';
-                
-                if (data.filtered_songs.length === 0) {
-                    filteredSongsList.innerHTML = '<div class="alert alert-info">No significantly different songs found.</div>';
+
+                if (!Array.isArray(data.filtered_songs) || data.filtered_songs.length === 0) {
+                    filteredSongsList.innerHTML = '<div class="alert alert-info">未找到与Group A显著不同的歌曲。</div>';
                 } else {
-                    data.filtered_songs.forEach(song => {
+                    data.filtered_songs.forEach((song, idx) => {
                         const songItem = document.createElement('div');
                         songItem.className = 'list-group-item';
                         songItem.innerHTML = `
                             <div class="d-flex w-100 justify-content-between">
-                                <h6 class="mb-1">${song.name}</h6>
+                                <h6 class="mb-1">${idx + 1}. ${song.name}</h6>
                             </div>
                             <small>${song.artist}</small>
                         `;
+                        // 可选：点击显示更多信息
+                        // songItem.addEventListener('click', () => showSongDetail(song));
                         filteredSongsList.appendChild(songItem);
                     });
-                    
+
                     // Add summary
                     const summary = document.createElement('div');
                     summary.className = 'alert alert-warning mt-3';
-                    summary.innerHTML = `Found ${data.filtered_songs.length} out of ${data.total_count} songs that are significantly different from Group A.`;
+                    summary.innerHTML = `共找到 <b>${data.filtered_songs.length}</b> 首与Group A显著不同的歌曲（共${data.total_count}首）。`;
                     filteredSongsList.appendChild(summary);
                 }
+            }
+        });
+    </script>
+</body>
+</html>
