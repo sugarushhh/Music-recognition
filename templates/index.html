@@ -219,19 +219,6 @@
         </div>
     </div>
 
-    <div class="modal fade" id="loading-modal" tabindex="-1" data-bs-backdrop="static" aria-hidden="true">
-        <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content">
-                <div class="modal-body text-center p-4">
-                    <div class="spinner-border text-primary mb-3" role="status">
-                        <span class="visually-hidden">Loading...</span>
-                    </div>
-                    <h5 id="loading-message">Processing request...</h5>
-                </div>
-            </div>
-        </div>
-    </div>
-
     <footer class="mt-5 py-3 text-center text-muted">
         <div class="container">
             <p>Data provided by Last.fm API</p>
@@ -255,39 +242,12 @@
             
             // Error modal
             const errorModal = new bootstrap.Modal(document.getElementById('error-modal'));
-            const loadingModal = new bootstrap.Modal(document.getElementById('loading-modal'));
             
             // Helper function to show error
             function showError(message) {
                 document.getElementById('error-message').textContent = message;
                 errorModal.show();
             }
-            
-            // Helper function to show loading
-            let loadingTimeout = null;
-            function showLoading(message = 'Processing request...') {
-                console.log('showLoading called:', message); // AI调试用
-                document.getElementById('loading-message').textContent = message;
-                loadingModal.show();
-                if (loadingTimeout) {
-                    clearTimeout(loadingTimeout);
-                }
-                loadingTimeout = setTimeout(() => {
-                    loadingModal.hide();
-                    console.log('loading auto hide'); // AI调试用
-                }, 5000);
-            }
-            
-            function hideLoading() {
-                loadingModal.hide();
-                if (loadingTimeout) {
-                    clearTimeout(loadingTimeout);
-                    loadingTimeout = null;
-                }
-            }
-            // 挂载到window，方便控制台调试
-            window.showLoading = showLoading;
-            window.hideLoading = hideLoading;
             
             // Check API status
             fetch('/api/status')
@@ -347,8 +307,6 @@
                         return;
                     }
                     
-                    showLoading('Searching for songs...');
-                    
                     fetchWithTimeout('/api/search_track', {
                         method: 'POST',
                         headers: {
@@ -361,12 +319,9 @@
                         try {
                             data = await response.json();
                         } catch (e) {
-                            hideLoading();
-                            showError('服务器返回格式错误，无法解析。');
                             console.error('JSON解析失败', e);
                             return;
                         }
-                        hideLoading();
                         if (!data.success) {
                             showError(data.error || 'Failed to search tracks.');
                             return;
@@ -374,7 +329,6 @@
                         displaySearchResults(data.results, groupId, searchResults);
                     })
                     .catch(error => {
-                        hideLoading();
                         showError(error.message || 'An error occurred while searching. Please try again.');
                         console.error(error);
                     });
@@ -416,8 +370,6 @@
             }
             
             function addSongToGroup(track, groupId) {
-                showLoading('Processing track...');
-                
                 fetch('/api/process_track', {
                     method: 'POST',
                     headers: {
@@ -431,8 +383,6 @@
                 })
                 .then(response => response.json())
                 .then(data => {
-                    hideLoading();
-                    
                     if (!data.success) {
                         showError(data.error || 'Failed to process track.');
                         return;
@@ -469,7 +419,6 @@
                     document.getElementById('comparison-container').style.display = 'none';
                 })
                 .catch(error => {
-                    hideLoading();
                     showError('An error occurred while processing the track. Please try again.');
                     console.error(error);
                 });
@@ -535,8 +484,6 @@
                     return;
                 }
                 
-                showLoading(`Analyzing Group ${groupId}...`);
-                
                 fetch('/api/analyze_group', {
                     method: 'POST',
                     headers: {
@@ -549,8 +496,6 @@
                 })
                 .then(response => response.json())
                 .then(data => {
-                    hideLoading();
-                    
                     if (!data.success) {
                         showError(data.error || 'Failed to analyze group.');
                         return;
@@ -565,7 +510,6 @@
                     }
                 })
                 .catch(error => {
-                    hideLoading();
                     showError('An error occurred during analysis. Please try again.');
                     console.error(error);
                 });
@@ -644,8 +588,6 @@
             }
             
             function compareGroups() {
-                showLoading('Comparing groups...');
-                
                 fetch('/api/compare_groups', {
                     method: 'POST',
                     headers: {
@@ -655,8 +597,6 @@
                 })
                 .then(response => response.json())
                 .then(data => {
-                    hideLoading();
-                    
                     if (!data.success) {
                         showError(data.error || 'Failed to compare groups.');
                         return;
@@ -666,7 +606,6 @@
                     document.getElementById('comparison-container').style.display = 'block';
                 })
                 .catch(error => {
-                    hideLoading();
                     showError('An error occurred during comparison. Please try again.');
                     console.error(error);
                 });
@@ -799,8 +738,6 @@
                     return;
                 }
 
-                showLoading('正在查找差异较大的歌曲...');
-
                 fetch('/api/filter_songs', {
                     method: 'POST',
                     headers: {
@@ -813,7 +750,6 @@
                 })
                 .then(response => response.json())
                 .then(data => {
-                    hideLoading();
                     filterBtn.disabled = false;
 
                     if (!data.success) {
@@ -826,7 +762,6 @@
                     document.getElementById('filter-results').style.display = 'block';
                 })
                 .catch(error => {
-                    hideLoading();
                     filterBtn.disabled = false;
                     showError('筛选过程中发生错误，请重试。');
                     console.error('筛选异常：', error);
