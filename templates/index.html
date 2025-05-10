@@ -266,15 +266,15 @@
             // Helper function to show loading
             let loadingTimeout = null;
             function showLoading(message = 'Processing request...') {
+                console.log('showLoading called:', message); // AI调试用
                 document.getElementById('loading-message').textContent = message;
                 loadingModal.show();
-                // 清除之前的定时器
                 if (loadingTimeout) {
                     clearTimeout(loadingTimeout);
                 }
-                // 5秒后自动隐藏 loading
                 loadingTimeout = setTimeout(() => {
                     loadingModal.hide();
+                    console.log('loading auto hide'); // AI调试用
                 }, 5000);
             }
             
@@ -285,6 +285,9 @@
                     loadingTimeout = null;
                 }
             }
+            // 挂载到window，方便控制台调试
+            window.showLoading = showLoading;
+            window.hideLoading = hideLoading;
             
             // Check API status
             fetch('/api/status')
