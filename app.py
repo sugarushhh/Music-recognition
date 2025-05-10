@@ -141,9 +141,11 @@ def extract_track_features(track_info):
         'valence': 0.5,
         'speechiness': 0.5,
         'tempo': 120,  # Default tempo
+        'genre': 'unknown',
+        'language': 'unknown',
     }
     
-    # Map common tags to musical features
+    # Map common tags to musical features, genre, and language
     tag_mapping = {
         'dance': ('danceability', 0.8),
         'danceable': ('danceability', 0.8),
@@ -164,6 +166,28 @@ def extract_track_features(track_info):
         'spoken word': ('speechiness', 0.9),
         'fast': ('tempo', 160),
         'slow': ('tempo', 80),
+        # genre
+        'pop': ('genre', 'pop'),
+        'rock': ('genre', 'rock'),
+        'jazz': ('genre', 'jazz'),
+        'blues': ('genre', 'blues'),
+        'hip hop': ('genre', 'hiphop'),
+        'classical': ('genre', 'classical'),
+        'metal': ('genre', 'metal'),
+        'folk': ('genre', 'folk'),
+        # language
+        'english': ('language', 'english'),
+        'chinese': ('language', 'chinese'),
+        'mandarin': ('language', 'chinese'),
+        'cantonese': ('language', 'chinese'),
+        'japanese': ('language', 'japanese'),
+        'french': ('language', 'french'),
+        'german': ('language', 'german'),
+        'spanish': ('language', 'spanish'),
+        'korean': ('language', 'korean'),
+        'italian': ('language', 'italian'),
+        'russian': ('language', 'russian'),
+        'portuguese': ('language', 'portuguese'),
     }
     
     # Extract tag names and count
@@ -172,8 +196,7 @@ def extract_track_features(track_info):
         for tag in tags:
             tag_name = tag.get('name', '').lower()
             tag_count += 1
-            
-            # Map tag to feature
+            # Map tag to feature/genre/language
             for keyword, (feature, value) in tag_mapping.items():
                 if keyword in tag_name:
                     features[feature] = value
@@ -260,6 +283,8 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
     
     # Get reference group feature vectors
     reference_features = []
+    reference_genre = None
+    reference_language = None
     for song in reference_songs:
         if song in track_features_map:
             features = track_features_map[song]['features']
@@ -270,6 +295,10 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
                 features['valence']
             ]
             reference_features.append(feature_vector)
+            if reference_genre is None:
+                reference_genre = features.get('genre', 'unknown')
+            if reference_language is None:
+                reference_language = features.get('language', 'unknown')
     
     if not reference_features:
         return []
@@ -282,16 +311,18 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
     for song in candidate_songs:
         if song in track_features_map:
             features = track_features_map[song]['features']
+            # genre/language 不同直接判为 dissimilar
+            if features.get('genre', 'unknown') != reference_genre or features.get('language', 'unknown') != reference_language:
+                dissimilar_songs.append(song)
+                continue
             feature_vector = [
                 features['danceability'], features['energy'], 
                 features['speechiness'], features['acousticness'], 
                 features['instrumentalness'], features['liveness'], 
                 features['valence']
             ]
-            
             # Calculate Euclidean distance
             distance = np.linalg.norm(np.array(feature_vector) - reference_avg)
-            
             # If distance exceeds threshold, consider it significantly different
             if distance > 0.8:
                 dissimilar_songs.append(song)
@@ -303,7 +334,7 @@ def compare_tags(tag_a, tag_b):
     comparison = {}
     
     # Compare basic tags
-    for key in ['energy', 'danceability', 'tempo', 'style', 'mood', 'popularity']:
+    for key in ['energy', 'danceability', 'tempo', 'style', 'mood', 'popularity', 'genre', 'language']:
         if key in tag_a and key in tag_b:
             comparison[key] = {
                 'tag_a': tag_a[key],
