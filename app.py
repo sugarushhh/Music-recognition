@@ -237,6 +237,9 @@ def extract_track_features(track_info):
     genre = features.get('genre', 'unknown')
     features['genre_main'] = GENRE_MAIN_CLASS.get(genre, genre)
     
+    # 保存原始标签列表用于重叠度判定
+    features['tags'] = tags
+    
     return features
 
 def analyze_music_features(features_list):
@@ -333,7 +336,9 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
             if reference_artist is None:
                 reference_artist = track_features_map[song].get('artist', None)
             if reference_tags is None:
-                reference_tags = set(features.get('tags', [])) if 'tags' in features else set()
+                reference_tags = set()
+                if 'tags' in features and isinstance(features['tags'], list):
+                    reference_tags = set([t['name'].lower() for t in features['tags'] if 'name' in t])
     
     if not reference_features:
         return []
@@ -358,7 +363,9 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
                 dissimilar_songs.append(song)
                 continue
             # 3. 标签重叠度判定
-            song_tags = set(features.get('tags', [])) if 'tags' in features else set()
+            song_tags = set()
+            if 'tags' in features and isinstance(features['tags'], list):
+                song_tags = set([t['name'].lower() for t in features['tags'] if 'name' in t])
             if reference_tags and song_tags:
                 overlap = len(reference_tags & song_tags) / max(1, len(reference_tags | song_tags))
                 if overlap < 0.3:
