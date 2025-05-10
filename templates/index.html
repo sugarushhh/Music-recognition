@@ -314,7 +314,16 @@
                 const searchBtn = document.getElementById(`search-btn-${groupId}`);
                 const searchResults = document.getElementById(`search-results-${groupId}`);
                 
-                // Search button click handler
+                // fetch with timeout
+                function fetchWithTimeout(resource, options = {}, timeout = 10000) {
+                    return Promise.race([
+                        fetch(resource, options),
+                        new Promise((_, reject) =>
+                            setTimeout(() => reject(new Error('请求超时，请重试')), timeout)
+                        )
+                    ]);
+                }
+                
                 searchBtn.addEventListener('click', function() {
                     const query = searchInput.value.trim();
                     if (query.length < 2) {
@@ -324,13 +333,13 @@
                     
                     showLoading('Searching for songs...');
                     
-                    fetch('/api/search_track', {
+                    fetchWithTimeout('/api/search_track', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json'
                         },
                         body: JSON.stringify({ query: query })
-                    })
+                    }, 10000)
                     .then(async response => {
                         let data;
                         try {
@@ -350,7 +359,7 @@
                     })
                     .catch(error => {
                         hideLoading();
-                        showError('An error occurred while searching. Please try again.');
+                        showError(error.message || 'An error occurred while searching. Please try again.');
                         console.error(error);
                     });
                 });

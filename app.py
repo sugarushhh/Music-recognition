@@ -348,11 +348,18 @@ def api_search_track():
     try:
         tracks = search_track(query)
         results = []
-        
-        for track in tracks[:5]:  # 只取前5个
+
+        # 先筛选歌名完全等于query的（忽略大小写）
+        exact_matches = [
+            track for track in tracks
+            if track.get('name', '').strip().lower() == query.strip().lower()
+        ]
+        # 如果有完全匹配，优先返回这些
+        filtered_tracks = exact_matches if exact_matches else tracks
+
+        for track in filtered_tracks[:5]:
             track_name = track.get('name', '')
             artist_name = track.get('artist', '')
-            
             results.append({
                 'name': track_name,
                 'artist': artist_name,
