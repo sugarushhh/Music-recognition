@@ -27,6 +27,28 @@ track_features_map = {}
 tag_A = {}
 tag_B = {}
 
+# 增加 genre 主类归一化映射
+GENRE_MAIN_CLASS = {
+    'pop': 'pop',
+    'dance': 'pop',
+    'synthpop': 'pop',
+    'rock': 'rock',
+    'classic rock': 'rock',
+    'hard rock': 'rock',
+    'metal': 'rock',
+    'punk': 'rock',
+    'jazz': 'jazz',
+    'blues': 'jazz',
+    'hip hop': 'hiphop',
+    'hiphop': 'hiphop',
+    'rap': 'hiphop',
+    'classical': 'classical',
+    'folk': 'folk',
+    'country': 'folk',
+    'electronic': 'electronic',
+    # ...可继续补充...
+}
+
 def safe_api_call(method, params, retries=MAX_RETRIES):
     """Safely call the Last.fm API with error handling and retries"""
     params['api_key'] = API_KEY
@@ -211,6 +233,10 @@ def extract_track_features(track_info):
         except (ValueError, TypeError):
             features['duration'] = 0
     
+    # 归一化 genre 到主类
+    genre = features.get('genre', 'unknown')
+    features['genre_main'] = GENRE_MAIN_CLASS.get(genre, genre)
+    
     return features
 
 def analyze_music_features(features_list):
@@ -283,7 +309,7 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
     
     # Get reference group feature vectors
     reference_features = []
-    reference_genre = None
+    reference_genre_main = None
     reference_language = None
     for song in reference_songs:
         if song in track_features_map:
@@ -295,8 +321,8 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
                 features['valence']
             ]
             reference_features.append(feature_vector)
-            if reference_genre is None:
-                reference_genre = features.get('genre', 'unknown')
+            if reference_genre_main is None:
+                reference_genre_main = features.get('genre_main', 'unknown')
             if reference_language is None:
                 reference_language = features.get('language', 'unknown')
     
@@ -311,8 +337,8 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
     for song in candidate_songs:
         if song in track_features_map:
             features = track_features_map[song]['features']
-            # genre/language 不同直接判为 dissimilar
-            if features.get('genre', 'unknown') != reference_genre or features.get('language', 'unknown') != reference_language:
+            # 只在主风格不同才判为 dissimilar
+            if features.get('genre_main', 'unknown') != reference_genre_main:
                 dissimilar_songs.append(song)
                 continue
             feature_vector = [
@@ -334,7 +360,7 @@ def compare_tags(tag_a, tag_b):
     comparison = {}
     
     # Compare basic tags
-    for key in ['energy', 'danceability', 'tempo', 'style', 'mood', 'popularity', 'genre', 'language']:
+    for key in ['energy', 'danceability', 'tempo', 'style', 'mood', 'popularity', 'genre_main', 'language']:
         if key in tag_a and key in tag_b:
             comparison[key] = {
                 'tag_a': tag_a[key],
