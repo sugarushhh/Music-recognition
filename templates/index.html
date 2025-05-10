@@ -264,13 +264,26 @@
             }
             
             // Helper function to show loading
+            let loadingTimeout = null;
             function showLoading(message = 'Processing request...') {
                 document.getElementById('loading-message').textContent = message;
                 loadingModal.show();
+                // 清除之前的定时器
+                if (loadingTimeout) {
+                    clearTimeout(loadingTimeout);
+                }
+                // 5秒后自动隐藏 loading
+                loadingTimeout = setTimeout(() => {
+                    loadingModal.hide();
+                }, 5000);
             }
             
             function hideLoading() {
                 loadingModal.hide();
+                if (loadingTimeout) {
+                    clearTimeout(loadingTimeout);
+                    loadingTimeout = null;
+                }
             }
             
             // Check API status
