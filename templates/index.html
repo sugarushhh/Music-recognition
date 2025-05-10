@@ -783,9 +783,10 @@
                                 <h6 class="mb-1">${idx + 1}. ${song.name}</h6>
                             </div>
                             <small>${song.artist}</small>
+                            <div class="text-danger mt-1" style="font-size: 0.95em;">
+                                判定原因：${song.reason || '无'}
+                            </div>
                         `;
-                        // 可选：点击显示更多信息
-                        // songItem.addEventListener('click', () => showSongDetail(song));
                         filteredSongsList.appendChild(songItem);
                     });
 
