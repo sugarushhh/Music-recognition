@@ -310,7 +310,10 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
     # Get reference group feature vectors
     reference_features = []
     reference_genre_main = None
+    reference_genre = None
     reference_language = None
+    reference_artist = None
+    reference_tags = None
     for song in reference_songs:
         if song in track_features_map:
             features = track_features_map[song]['features']
@@ -323,8 +326,14 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
             reference_features.append(feature_vector)
             if reference_genre_main is None:
                 reference_genre_main = features.get('genre_main', 'unknown')
+            if reference_genre is None:
+                reference_genre = features.get('genre', 'unknown')
             if reference_language is None:
                 reference_language = features.get('language', 'unknown')
+            if reference_artist is None:
+                reference_artist = track_features_map[song].get('artist', None)
+            if reference_tags is None:
+                reference_tags = set(features.get('tags', [])) if 'tags' in features else set()
     
     if not reference_features:
         return []
@@ -332,25 +341,44 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
     # Calculate reference group average vector
     reference_avg = np.mean(reference_features, axis=0)
     
+    # 加权向量
+    weights = np.array([1.0, 1.0, 0.5, 0.5, 0.5, 0.5, 1.0])
+    
     # Calculate similarity for each candidate song
     dissimilar_songs = []
     for song in candidate_songs:
         if song in track_features_map:
             features = track_features_map[song]['features']
-            # 只在主风格不同才判为 dissimilar
+            # 1. 主风格不同直接 dissimilar
             if features.get('genre_main', 'unknown') != reference_genre_main:
                 dissimilar_songs.append(song)
                 continue
+            # 2. 子风格不同也 dissimilar
+            if features.get('genre', 'unknown') != reference_genre:
+                dissimilar_songs.append(song)
+                continue
+            # 3. 标签重叠度判定
+            song_tags = set(features.get('tags', [])) if 'tags' in features else set()
+            if reference_tags and song_tags:
+                overlap = len(reference_tags & song_tags) / max(1, len(reference_tags | song_tags))
+                if overlap < 0.3:
+                    dissimilar_songs.append(song)
+                    continue
+            # 4. 歌手优先判定
+            song_artist = track_features_map[song].get('artist', None)
+            if song_artist == reference_artist:
+                threshold = 2.0
+            else:
+                threshold = 1.5
+            # 5. 加权距离
             feature_vector = [
                 features['danceability'], features['energy'], 
                 features['speechiness'], features['acousticness'], 
                 features['instrumentalness'], features['liveness'], 
                 features['valence']
             ]
-            # Calculate Euclidean distance
-            distance = np.linalg.norm(np.array(feature_vector) - reference_avg)
-            # If distance exceeds threshold, consider it significantly different
-            if distance > 0.8:
+            distance = np.linalg.norm((np.array(feature_vector) - reference_avg) * weights)
+            if distance > threshold:
                 dissimilar_songs.append(song)
     
     return dissimilar_songs
