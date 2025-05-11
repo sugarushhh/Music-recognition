@@ -354,29 +354,39 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
     for song in candidate_songs:
         if song in track_features_map:
             features = track_features_map[song]['features']
+            reason = None
+            
             # 1. 主风格不同直接 dissimilar
-            if features.get('genre_main', 'unknown') != reference_genre_main:
-                dissimilar_songs.append(song)
+            if features.get('genre_main', 'unknown') != reference_genre_main and reference_genre_main != 'unknown':
+                reason = f"主风格不同: {features.get('genre_main', 'unknown')} vs {reference_genre_main}"
+                dissimilar_songs.append({"id": song, "reason": reason})
                 continue
+                
             # 2. 子风格不同也 dissimilar
-            if features.get('genre', 'unknown') != reference_genre:
-                dissimilar_songs.append(song)
+            if features.get('genre', 'unknown') != reference_genre and reference_genre != 'unknown':
+                reason = f"子风格不同: {features.get('genre', 'unknown')} vs {reference_genre}"
+                dissimilar_songs.append({"id": song, "reason": reason})
                 continue
+                
             # 3. 标签重叠度判定
             song_tags = set()
             if 'tags' in features and isinstance(features['tags'], list):
                 song_tags = set([t['name'].lower() for t in features['tags'] if 'name' in t])
+            
             if reference_tags and song_tags:
                 overlap = len(reference_tags & song_tags) / max(1, len(reference_tags | song_tags))
                 if overlap < 0.3:
-                    dissimilar_songs.append(song)
+                    reason = f"标签重叠度低: {overlap:.2f}"
+                    dissimilar_songs.append({"id": song, "reason": reason})
                     continue
+                    
             # 4. 歌手优先判定
             song_artist = track_features_map[song].get('artist', None)
             if song_artist == reference_artist:
                 threshold = 2.0
             else:
                 threshold = 1.5
+                
             # 5. 加权距离
             feature_vector = [
                 features['danceability'], features['energy'], 
@@ -386,7 +396,8 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
             ]
             distance = np.linalg.norm((np.array(feature_vector) - reference_avg) * weights)
             if distance > threshold:
-                dissimilar_songs.append(song)
+                reason = f"音频特征差异大: 距离值 {distance:.2f} > {threshold}"
+                dissimilar_songs.append({"id": song, "reason": reason})
     
     return dissimilar_songs
 
@@ -547,12 +558,14 @@ def api_filter_songs():
         
         # Get detailed info for filtered songs
         filtered_details = []
-        for song_key in filtered_songs:
+        for song_item in filtered_songs:
+            song_key = song_item["id"]
             if song_key in track_features_map:
                 filtered_details.append({
                     'id': song_key,
                     'name': track_features_map[song_key]['name'],
-                    'artist': track_features_map[song_key]['artist']
+                    'artist': track_features_map[song_key]['artist'],
+                    'reason': song_item["reason"]
                 })
         
         return jsonify({
