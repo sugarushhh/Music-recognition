@@ -705,15 +705,13 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
     if not reference_songs or not candidate_songs:
         return []
     
-    # Get reference group feature vectors
+    # 获取参考组特征向量
     reference_features = []
     reference_language = None
     reference_artist_era = None
     reference_genre_main = None
-    reference_genre = None
-    reference_era = None
     reference_artists = set()  # 收集参考组的所有歌手
-    reference_tags = None
+    reference_tags = set()  # 收集参考组的所有标签
     
     # 首先收集所有参考组的歌手
     for song in reference_songs:
@@ -744,73 +742,105 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
                 reference_artist_era = features['artist_era']
             if reference_genre_main is None:
                 reference_genre_main = features.get('genre_main', 'unknown')
-            if reference_genre is None:
-                reference_genre = features.get('genre', 'unknown')
-            if reference_era is None:
-                reference_era = features.get('era', 'unknown')
             
-            if reference_tags is None:
-                reference_tags = set()
-                if 'tags' in features and isinstance(features['tags'], list):
-                    reference_tags = set([t['name'].lower() for t in features['tags'] if 'name' in t])
+            # 收集参考组的所有标签
+            if 'tags' in features and isinstance(features['tags'], list):
+                for tag in features['tags']:
+                    if 'name' in tag:
+                        reference_tags.add(tag['name'].lower())
     
     if not reference_features:
         return []
     
-    # Calculate reference group average vector
+    # 计算参考组平均向量
     reference_avg = np.mean(reference_features, axis=0)
     
-    # Calculate similarity for each candidate song
+    # 计算每个候选歌曲的相似度
     dissimilar_songs = []
     for song in candidate_songs:
         if song in track_features_map:
             features = track_features_map[song]['features']
             artist_name = track_features_map[song].get('artist', None)
             
-            # 1. 首先检查是否是同一歌手的歌曲
-            if artist_name and artist_name.lower() in reference_artists:
-                logger.info(f"歌曲 '{track_features_map[song]['name']}' 的歌手 '{artist_name}' 在A组中出现过，默认为相似")
-                continue
-            
-            # 初始化相似度分数（0-1，1表示完全相似）
+            # 使用多因素评分系统，初始分数为1.0（完全相似）
             similarity_score = 1.0
             reasons = []
             
-            # 2. 优先判断语言差异（权重最高）
+            # 1. 首先检查是否是同一歌手的歌曲 - 同一歌手优先判定为相似
+            same_artist = False
+            if artist_name and artist_name.lower() in reference_artists:
+                logger.info(f"歌曲 '{track_features_map[song]['name']}' 的歌手 '{artist_name}' 在A组中出现过")
+                same_artist = True
+                similarity_score += 0.3  # 大幅提高同一歌手的相似度
+            
+            # 2. 判断语言差异 - 语言不同作为高权重判定依据
             song_language = features.get('language', 'unknown')
+            language_different = False
             if song_language != reference_language and reference_language != 'unknown' and song_language != 'unknown':
-                similarity_score -= 0.5  # 语言不同，显著降低相似度
-                reasons.append(f"语言不同: {song_language} vs {reference_language}")
+                language_different = True
+                # 如果不是同一歌手，语言不同则大幅降低相似度
+                if not same_artist:
+                    similarity_score -= 0.6  # 显著增加语言不同的权重
+                    reasons.append(f"语言不同: {song_language} vs {reference_language}")
+                else:
+                    # 即使是同一歌手，语言不同也适当降低相似度
+                    similarity_score -= 0.2
+                    reasons.append(f"同一歌手但语言不同: {song_language} vs {reference_language}")
             
             # 3. 判断歌手时代差异
             artist_era = features.get('artist_era')
+            era_similar = True
             if artist_era and reference_artist_era:
                 era_diff = abs(artist_era - reference_artist_era)
-                if era_diff > 20:  # 只有超过20年才考虑时代差异
-                    similarity_score -= 0.3  # 时代差异大，显著降低相似度
-                    reasons.append(f"歌手时代差距大: {artist_era} vs {reference_artist_era} (相差{era_diff}年)")
-            
-            # 4. 如果语言和时代都没有显著差异，再考虑其他因素
-            if similarity_score > 0.5:
-                # 主风格相似度判断（权重较低）
-                if features.get('genre_main', 'unknown') != reference_genre_main and reference_genre_main != 'unknown' and features.get('genre_main', 'unknown') != 'unknown':
-                    similarity_score -= 0.15  # 主风格不同，轻微降低相似度
-                    reasons.append(f"主风格不同: {features.get('genre_main', 'unknown')} vs {reference_genre_main}")
                 
-                # 音乐特征向量距离判断（权重最低）
-                feature_vector = [
-                    features['danceability'], features['energy'], 
-                    features['speechiness'], features['acousticness'], 
-                    features['instrumentalness'], features['liveness'], 
-                    features['valence']
-                ]
-                distance = np.linalg.norm(np.array(feature_vector) - reference_avg)
-                if distance > 2.0:  # 提高阈值，降低影响
-                    similarity_score -= 0.1
-                    reasons.append(f"音乐特征差异大: 距离值 {distance:.2f}")
+                # 时代相似定义为相差20年以内
+                if era_diff > 20:
+                    era_similar = False
+                    # 如果语言相同但时代不相似
+                    if not language_different:
+                        similarity_score -= 0.3  # 中等权重
+                        reasons.append(f"语言相同但时代差距大: {artist_era} vs {reference_artist_era} (相差{era_diff}年)")
+                    # 如果语言不同且时代不相似，进一步降低相似度
+                    elif not same_artist:  # 非同一歌手
+                        similarity_score -= 0.2  # 叠加效应
+                        reasons.append(f"语言不同且时代差距大: {artist_era} vs {reference_artist_era} (相差{era_diff}年)")
             
-            # 5. 判断是否为显著不同
-            if similarity_score < 0.5:  # 保持阈值不变
+            # 4. 判断主风格差异 - 作为低权重判定依据
+            if features.get('genre_main', 'unknown') != reference_genre_main and reference_genre_main != 'unknown' and features.get('genre_main', 'unknown') != 'unknown':
+                # 如果语言相同且时代相似，曲风作为低权重判定
+                if not language_different and era_similar:
+                    similarity_score -= 0.2
+                    reasons.append(f"语言时代相似但主风格不同: {features.get('genre_main', 'unknown')} vs {reference_genre_main}")
+                # 如果语言相同但时代不相似，曲风作为高权重判定
+                elif not language_different and not era_similar:
+                    similarity_score -= 0.4
+                    reasons.append(f"语言相同时代不同且主风格不同: {features.get('genre_main', 'unknown')} vs {reference_genre_main}")
+            
+            # 5. 音乐特征向量距离判断 - 作为辅助判定
+            feature_vector = [
+                features['danceability'], features['energy'], 
+                features['speechiness'], features['acousticness'], 
+                features['instrumentalness'], features['liveness'], 
+                features['valence']
+            ]
+            distance = np.linalg.norm(np.array(feature_vector) - reference_avg)
+            
+            # 根据不同情况调整特征距离的权重
+            if distance > 1.5:
+                # 如果语言相同且时代相似，特征距离作为低权重判定
+                if not language_different and era_similar:
+                    similarity_score -= min(0.2, distance * 0.05)
+                # 如果语言相同但时代不相似，特征距离作为高权重判定
+                elif not language_different and not era_similar:
+                    similarity_score -= min(0.3, distance * 0.1)
+                # 如果语言不同，特征距离作为辅助判定
+                elif language_different:
+                    similarity_score -= min(0.1, distance * 0.03)
+                
+                reasons.append(f"音乐特征差异大: 距离值 {distance:.2f}")
+            
+            # 6. 判断是否为显著不同
+            if similarity_score < 0.6:  # 阈值可以根据需要调整
                 combined_reason = " | ".join(reasons)
                 dissimilar_songs.append({
                     "id": song, 
@@ -819,7 +849,6 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
                 })
     
     return dissimilar_songs
-
 def compare_tags(tag_a, tag_b):
     """Compare differences between two tag sets"""
     comparison = {}
