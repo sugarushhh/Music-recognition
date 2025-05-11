@@ -713,7 +713,7 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
     reference_genre = None
     reference_era = None
     reference_artists = set()  # 收集参考组的所有歌手
-    reference_tags = set()  # 收集参考组的所有标签
+    reference_tags = None
     
     # 首先收集所有参考组的歌手
     for song in reference_songs:
@@ -749,92 +749,68 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
             if reference_era is None:
                 reference_era = features.get('era', 'unknown')
             
-            # 收集参考组的所有标签
-            if 'tags' in features and isinstance(features['tags'], list):
-                for tag in features['tags']:
-                    if 'name' in tag:
-                        reference_tags.add(tag['name'].lower())
+            if reference_tags is None:
+                reference_tags = set()
+                if 'tags' in features and isinstance(features['tags'], list):
+                    reference_tags = set([t['name'].lower() for t in features['tags'] if 'name' in t])
     
     if not reference_features:
         return []
     
-    # 计算参考组平均向量
+    # Calculate reference group average vector
     reference_avg = np.mean(reference_features, axis=0)
     
-    # 计算每个候选歌曲的相似度
+    # Calculate similarity for each candidate song
     dissimilar_songs = []
     for song in candidate_songs:
         if song in track_features_map:
             features = track_features_map[song]['features']
             artist_name = track_features_map[song].get('artist', None)
             
-            # 使用多因素评分系统，初始分数为1.0（完全相似）
+            # 1. 首先检查是否是同一歌手的歌曲
+            if artist_name and artist_name.lower() in reference_artists:
+                logger.info(f"歌曲 '{track_features_map[song]['name']}' 的歌手 '{artist_name}' 在A组中出现过，默认为相似")
+                continue
+            
+            # 初始化相似度分数（0-1，1表示完全相似）
             similarity_score = 1.0
             reasons = []
             
-            # 1. 首先检查是否是同一歌手的歌曲
-            if artist_name and artist_name.lower() in reference_artists:
-                logger.info(f"歌曲 '{track_features_map[song]['name']}' 的歌手 '{artist_name}' 在A组中出现过，但仍进行其他差异判断")
-                # 不再直接跳过，而是给予加分
-                similarity_score += 0.1
-            
-            # 2. 判断语言差异
+            # 2. 优先判断语言差异（权重最高）
             song_language = features.get('language', 'unknown')
             if song_language != reference_language and reference_language != 'unknown' and song_language != 'unknown':
-                similarity_score -= 0.4  # 略微减小语言不同的权重
+                similarity_score -= 0.5  # 语言不同，显著降低相似度
                 reasons.append(f"语言不同: {song_language} vs {reference_language}")
             
             # 3. 判断歌手时代差异
             artist_era = features.get('artist_era')
             if artist_era and reference_artist_era:
                 era_diff = abs(artist_era - reference_artist_era)
-                era_similarity = calculate_era_similarity_score(artist_era, reference_artist_era)
-                # 使用更精确的时代相似度计算
-                similarity_score += (era_similarity - 0.5)  # 转换为-0.5到0.5的修正分数
-                if era_diff > 20:
+                if era_diff > 20:  # 只有超过20年才考虑时代差异
+                    similarity_score -= 0.3  # 时代差异大，显著降低相似度
                     reasons.append(f"歌手时代差距大: {artist_era} vs {reference_artist_era} (相差{era_diff}年)")
             
-            # 4. 判断主风格差异（增加权重）
-            if features.get('genre_main', 'unknown') != reference_genre_main and reference_genre_main != 'unknown' and features.get('genre_main', 'unknown') != 'unknown':
-                similarity_score -= 0.3  # 显著增加主风格差异的权重
-                reasons.append(f"主风格不同: {features.get('genre_main', 'unknown')} vs {reference_genre_main}")
+            # 4. 如果语言和时代都没有显著差异，再考虑其他因素
+            if similarity_score > 0.5:
+                # 主风格相似度判断（权重较低）
+                if features.get('genre_main', 'unknown') != reference_genre_main and reference_genre_main != 'unknown' and features.get('genre_main', 'unknown') != 'unknown':
+                    similarity_score -= 0.15  # 主风格不同，轻微降低相似度
+                    reasons.append(f"主风格不同: {features.get('genre_main', 'unknown')} vs {reference_genre_main}")
+                
+                # 音乐特征向量距离判断（权重最低）
+                feature_vector = [
+                    features['danceability'], features['energy'], 
+                    features['speechiness'], features['acousticness'], 
+                    features['instrumentalness'], features['liveness'], 
+                    features['valence']
+                ]
+                distance = np.linalg.norm(np.array(feature_vector) - reference_avg)
+                if distance > 2.0:  # 提高阈值，降低影响
+                    similarity_score -= 0.1
+                    reasons.append(f"音乐特征差异大: 距离值 {distance:.2f}")
             
-            # 5. 音乐特征向量距离判断（降低阈值，增加权重）
-            feature_vector = [
-                features['danceability'], features['energy'], 
-                features['speechiness'], features['acousticness'], 
-                features['instrumentalness'], features['liveness'], 
-                features['valence']
-            ]
-            distance = np.linalg.norm(np.array(feature_vector) - reference_avg)
-            # 降低阈值，增加权重
-            if distance > 1.5:  # 从2.0降低到1.5
-                similarity_score -= min(0.3, distance * 0.1)  # 距离越大，扣分越多，最多扣0.3分
-                reasons.append(f"音乐特征差异大: 距离值 {distance:.2f}")
-            
-            # 6. 标签重叠度分析（新增）
-            song_tags = set()
-            if 'tags' in features and isinstance(features['tags'], list):
-                song_tags = set([t['name'].lower() for t in features['tags'] if 'name' in t])
-            
-            if reference_tags and song_tags:
-                # 计算Jaccard相似度: 交集大小/并集大小
-                intersection = len(reference_tags.intersection(song_tags))
-                union = len(reference_tags.union(song_tags))
-                if union > 0:
-                    tag_similarity = intersection / union
-                    # 标签相似度低于0.1认为差异大
-                    if tag_similarity < 0.1 and len(song_tags) >= 3 and len(reference_tags) >= 3:
-                        similarity_score -= 0.2
-                        reasons.append(f"标签重叠度低: {tag_similarity:.2f}")
-            
-            # 7. 能量水平对比（新增）
-            if abs(features.get('energy', 0.5) - reference_features[0][1]) > 0.4:  # energy是第二个特征
-                similarity_score -= 0.2
-                reasons.append(f"能量水平差异大: {features.get('energy', 0.5):.2f} vs {reference_features[0][1]:.2f}")
-            
-            # 8. 判断是否为显著不同（降低阈值）
-            if similarity_score < 0.6:  # 从0.5提高到0.6，更容易判定为差异大
+            # 5. 判断是否为显著不同
+            if similarity_score < 0.5:  # 保持阈值不变
                 combined_reason = " | ".join(reasons)
                 dissimilar_songs.append({
                     "id": song, 
