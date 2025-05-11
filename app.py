@@ -10,6 +10,8 @@ from collections import Counter
 import time
 import html
 import logging
+import re
+from datetime import datetime
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -31,6 +33,7 @@ RETRY_DELAY = 2  # seconds between retries
 track_features_map = {}
 tag_A = {}
 tag_B = {}
+artist_info_cache = {}  # 缓存歌手信息
 
 # 增加 genre 主类归一化映射
 GENRE_MAIN_CLASS = {
@@ -87,6 +90,78 @@ ERA_MAPPING = {
     '2020s': '2020s',
 }
 
+# 歌手年代映射 - 用于估计歌手的活跃年代
+ARTIST_ERA = {
+    # 1950s
+    'elvis presley': 1950,
+    'chuck berry': 1950,
+    'buddy holly': 1950,
+    'little richard': 1950,
+    'johnny cash': 1950,
+    
+    # 1960s
+    'the beatles': 1960,
+    'the rolling stones': 1960,
+    'bob dylan': 1960,
+    'the beach boys': 1960,
+    'jimi hendrix': 1960,
+    'the doors': 1960,
+    
+    # 1970s
+    'led zeppelin': 1970,
+    'pink floyd': 1970,
+    'queen': 1970,
+    'david bowie': 1970,
+    'elton john': 1970,
+    'fleetwood mac': 1970,
+    'abba': 1970,
+    
+    # 1980s
+    'michael jackson': 1980,
+    'madonna': 1980,
+    'prince': 1980,
+    'u2': 1980,
+    'guns n roses': 1980,
+    'bon jovi': 1980,
+    'whitney houston': 1980,
+    
+    # 1990s
+    'nirvana': 1990,
+    'radiohead': 1990,
+    'tupac shakur': 1990,
+    'the notorious b.i.g.': 1990,
+    'spice girls': 1990,
+    'backstreet boys': 1990,
+    'mariah carey': 1990,
+    
+    # 2000s
+    'eminem': 2000,
+    'beyonce': 2000,
+    'coldplay': 2000,
+    'rihanna': 2000,
+    'kanye west': 2000,
+    'lady gaga': 2000,
+    'justin timberlake': 2000,
+    
+    # 2010s
+    'taylor swift': 2010,
+    'ed sheeran': 2010,
+    'drake': 2010,
+    'adele': 2010,
+    'bruno mars': 2010,
+    'ariana grande': 2010,
+    'billie eilish': 2010,
+    
+    # 2020s
+    'doja cat': 2020,
+    'olivia rodrigo': 2020,
+    'the weeknd': 2020,
+    'bad bunny': 2020,
+    'bts': 2020,
+    'dua lipa': 2020,
+    'harry styles': 2020,
+}
+
 def safe_api_call(method, params, retries=MAX_RETRIES):
     """Safely call the Last.fm API with error handling and retries"""
     params['api_key'] = API_KEY
@@ -131,6 +206,92 @@ def get_track_info(track_name, artist_name=None):
     except Exception as e:
         logger.error(f"Error getting track info: {e}")
         return None
+
+def get_artist_info(artist_name):
+    """获取歌手信息，包括标签和简介"""
+    # 检查缓存
+    if artist_name.lower() in artist_info_cache:
+        return artist_info_cache[artist_name.lower()]
+    
+    try:
+        result = safe_api_call('artist.getInfo', {'artist': artist_name})
+        
+        if 'artist' in result:
+            # 缓存结果
+            artist_info_cache[artist_name.lower()] = result['artist']
+            return result['artist']
+        return None
+    except Exception as e:
+        logger.error(f"Error getting artist info: {e}")
+        return None
+
+def estimate_artist_era(artist_name):
+    """估计歌手的活跃年代"""
+    # 检查预定义的歌手年代
+    artist_lower = artist_name.lower()
+    if artist_lower in ARTIST_ERA:
+        return ARTIST_ERA[artist_lower]
+    
+    # 从Last.fm获取歌手信息
+    artist_info = get_artist_info(artist_name)
+    if not artist_info:
+        return None
+    
+    # 从标签中提取年代信息
+    if 'tags' in artist_info and 'tag' in artist_info['tags']:
+        tags = artist_info['tags']['tag']
+        if isinstance(tags, dict):
+            tags = [tags]
+        
+        for tag in tags:
+            tag_name = tag.get('name', '').lower()
+            # 检查标签中是否包含年代信息
+            decade_match = re.search(r'(19\d0s|20\d0s)', tag_name)
+            if decade_match:
+                decade = decade_match.group(1)
+                return int(decade[:4])
+            
+            # 检查特定年代标签
+            if '50s' in tag_name or '1950s' in tag_name:
+                return 1950
+            elif '60s' in tag_name or '1960s' in tag_name:
+                return 1960
+            elif '70s' in tag_name or '1970s' in tag_name:
+                return 1970
+            elif '80s' in tag_name or '1980s' in tag_name:
+                return 1980
+            elif '90s' in tag_name or '1990s' in tag_name:
+                return 1990
+            elif '00s' in tag_name or '2000s' in tag_name:
+                return 2000
+            elif '10s' in tag_name or '2010s' in tag_name:
+                return 2010
+            elif '20s' in tag_name or '2020s' in tag_name:
+                return 2020
+    
+    # 从简介中提取年代信息
+    if 'bio' in artist_info and 'content' in artist_info['bio']:
+        bio = artist_info['bio']['content']
+        # 查找形如"formed in 1985"或"started in 1990s"的文本
+        formed_match = re.search(r'formed in (\d{4})', bio, re.IGNORECASE)
+        if formed_match:
+            year = int(formed_match.group(1))
+            return (year // 10) * 10  # 返回对应的十年
+        
+        started_match = re.search(r'started in (\d{4})', bio, re.IGNORECASE)
+        if started_match:
+            year = int(started_match.group(1))
+            return (year // 10) * 10
+        
+        # 查找任何四位数年份，取最早的一个作为参考
+        years = re.findall(r'\b(19\d{2}|20[0-2]\d)\b', bio)
+        if years:
+            earliest_year = min(int(y) for y in years)
+            if 1950 <= earliest_year <= datetime.now().year:
+                return (earliest_year // 10) * 10
+    
+    # 如果无法确定，返回None
+    return None
 
 def search_track(track_name):
     """Search for tracks on Last.fm"""
@@ -197,6 +358,10 @@ def extract_track_features(track_info):
     for tag in tags[:10]:  # 打印前10个标签
         logger.info(f"  - {tag.get('name', '')}")
     
+    # 获取歌手年代
+    artist_era = estimate_artist_era(artist_name)
+    logger.info(f"歌手 {artist_name} 的估计年代: {artist_era if artist_era else '未知'}")
+    
     # Initialize features with default values
     features = {
         'danceability': 0.5,
@@ -210,6 +375,7 @@ def extract_track_features(track_info):
         'genre': 'unknown',
         'language': 'unknown',
         'era': 'unknown',  # 添加时代特征
+        'artist_era': artist_era,  # 添加歌手年代
     }
     
     # Map common tags to musical features, genre, and language
@@ -434,10 +600,11 @@ def analyze_music_features(features_list):
     else:
         tags['popularity'] = 'moderate'
     
-    # 添加主要流派和语言
+    # 添加主要流派、语言和歌手年代
     genre_counter = Counter()
     language_counter = Counter()
     era_counter = Counter()
+    artist_era_counter = Counter()
     
     for features in features_list:
         if 'genre_main' in features and features['genre_main'] != 'unknown':
@@ -446,6 +613,8 @@ def analyze_music_features(features_list):
             language_counter[features['language']] += 1
         if 'era' in features and features['era'] != 'unknown':
             era_counter[features['era']] += 1
+        if 'artist_era' in features and features['artist_era'] is not None:
+            artist_era_counter[features['artist_era']] += 1
     
     # 添加最常见的流派、语言和时代
     if genre_counter:
@@ -454,11 +623,33 @@ def analyze_music_features(features_list):
         tags['language'] = language_counter.most_common(1)[0][0]
     if era_counter:
         tags['era'] = era_counter.most_common(1)[0][0]
+    if artist_era_counter:
+        tags['artist_era'] = artist_era_counter.most_common(1)[0][0]
     
     # Add average features
     tags['avg_features'] = avg_features
     
     return tags
+
+def calculate_era_similarity_score(artist_era_a, artist_era_b):
+    """计算歌手年代的相似度分数，返回0-1之间的值，1表示完全相似"""
+    if artist_era_a is None or artist_era_b is None:
+        return 0.5  # 如果任一年代未知，返回中等相似度
+    
+    # 计算年代差距
+    era_diff = abs(artist_era_a - artist_era_b)
+    
+    # 差距在30年以内认为是相似的，差距越小相似度越高
+    if era_diff <= 30:
+        # 将30年内的差距映射到0.5-1.0的相似度范围
+        # 0年差距 -> 1.0相似度
+        # 30年差距 -> 0.5相似度
+        return 1.0 - (era_diff / 60.0)
+    else:
+        # 将大于30年的差距映射到0.0-0.5的相似度范围
+        # 30年差距 -> 0.5相似度
+        # 90年或更大差距 -> 0.0相似度
+        return max(0.0, 0.5 - ((era_diff - 30) / 120.0))
 
 def filter_dissimilar_songs(reference_songs, candidate_songs):
     """Filter tracks that are significantly different from the reference group"""
@@ -467,13 +658,25 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
     
     # Get reference group feature vectors
     reference_features = []
+    reference_language = None
+    reference_artist_era = None
     reference_genre_main = None
     reference_genre = None
-    reference_language = None
     reference_era = None
-    reference_artist = None
+    reference_artists = set()  # 收集参考组的所有歌手
     reference_tags = None
     
+    # 首先收集所有参考组的歌手
+    for song in reference_songs:
+        if song in track_features_map:
+            artist_name = track_features_map[song].get('artist', None)
+            if artist_name:
+                # 将歌手名转为小写并添加到集合中
+                reference_artists.add(artist_name.lower())
+    
+    logger.info(f"参考组(A组)包含的歌手: {', '.join(reference_artists)}")
+    
+    # 然后收集其他特征
     for song in reference_songs:
         if song in track_features_map:
             features = track_features_map[song]['features']
@@ -486,16 +689,17 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
             reference_features.append(feature_vector)
             
             # 收集参考组的特征
+            if reference_language is None:
+                reference_language = features.get('language', 'unknown')
+            if reference_artist_era is None and 'artist_era' in features and features['artist_era'] is not None:
+                reference_artist_era = features['artist_era']
             if reference_genre_main is None:
                 reference_genre_main = features.get('genre_main', 'unknown')
             if reference_genre is None:
                 reference_genre = features.get('genre', 'unknown')
-            if reference_language is None:
-                reference_language = features.get('language', 'unknown')
             if reference_era is None:
                 reference_era = features.get('era', 'unknown')
-            if reference_artist is None:
-                reference_artist = track_features_map[song].get('artist', None)
+            
             if reference_tags is None:
                 reference_tags = set()
                 if 'tags' in features and isinstance(features['tags'], list):
@@ -526,45 +730,61 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
     for song in candidate_songs:
         if song in track_features_map:
             features = track_features_map[song]['features']
-            reason = None
+            artist_name = track_features_map[song].get('artist', None)
             
-            # 1. 语言不同
+            # 如果是A组中任何一位歌手的歌曲，默认没有显著区别
+            if artist_name and artist_name.lower() in reference_artists:
+                logger.info(f"歌曲 '{track_features_map[song]['name']}' 的歌手 '{artist_name}' 在A组中出现过，跳过判断")
+                continue
+            
+            # 初始化相似度分数（0-1，1表示完全相似）
+            similarity_score = 1.0
+            reasons = []
+            
+            # 按照权重顺序判断: 语言 > 曲风 > 其他 (年代作为辅助因素)
+            
+            # 1. 语言不同 (权重最高)
             if features.get('language', 'unknown') != reference_language and reference_language != 'unknown' and features.get('language', 'unknown') != 'unknown':
-                reason = f"语言不同: {features.get('language', 'unknown')} vs {reference_language}"
-                dissimilar_songs.append({"id": song, "reason": reason})
-                continue
+                similarity_score -= 0.5  # 语言不同，相似度大幅降低
+                reasons.append(f"语言不同: {features.get('language', 'unknown')} vs {reference_language}")
             
-            # 2. 时代不同
-            if features.get('era', 'unknown') != reference_era and reference_era != 'unknown' and features.get('era', 'unknown') != 'unknown':
-                reason = f"时代不同: {features.get('era', 'unknown')} vs {reference_era}"
-                dissimilar_songs.append({"id": song, "reason": reason})
-                continue
-            
-            # 3. 主风格不同
+            # 2. 主风格不同
             if features.get('genre_main', 'unknown') != reference_genre_main and reference_genre_main != 'unknown' and features.get('genre_main', 'unknown') != 'unknown':
-                reason = f"主风格不同: {features.get('genre_main', 'unknown')} vs {reference_genre_main}"
-                dissimilar_songs.append({"id": song, "reason": reason})
-                continue
+                similarity_score -= 0.3  # 主风格不同，相似度降低
+                reasons.append(f"主风格不同: {features.get('genre_main', 'unknown')} vs {reference_genre_main}")
                 
-            # 4. 子风格不同
+            # 3. 子风格不同
             if features.get('genre', 'unknown') != reference_genre and reference_genre != 'unknown' and features.get('genre', 'unknown') != 'unknown':
-                reason = f"子风格不同: {features.get('genre', 'unknown')} vs {reference_genre}"
-                dissimilar_songs.append({"id": song, "reason": reason})
-                continue
+                similarity_score -= 0.2  # 子风格不同，相似度略微降低
+                reasons.append(f"子风格不同: {features.get('genre', 'unknown')} vs {reference_genre}")
+            
+            # 4. 时代不同
+            if features.get('era', 'unknown') != reference_era and reference_era != 'unknown' and features.get('era', 'unknown') != 'unknown':
+                similarity_score -= 0.1  # 时代不同，相似度略微降低
+                reasons.append(f"时代不同: {features.get('era', 'unknown')} vs {reference_era}")
                 
-            # 5. 标签重叠度判定 - 降低阈值
+            # 5. 歌手年代差距 (作为辅助因素)
+            artist_era = features.get('artist_era')
+            if artist_era and reference_artist_era:
+                era_similarity = calculate_era_similarity_score(artist_era, reference_artist_era)
+                # 年代相似度影响总相似度，但权重较低
+                era_diff = abs(artist_era - reference_artist_era)
+                if era_diff > 30:
+                    similarity_score -= 0.1  # 年代差距大，轻微降低相似度
+                    reasons.append(f"歌手年代差距较大: {artist_era} vs {reference_artist_era} (相差{era_diff}年)")
+                
+            # 6. 标签重叠度判定
             song_tags = set()
             if 'tags' in features and isinstance(features['tags'], list):
                 song_tags = set([t['name'].lower() for t in features['tags'] if 'name' in t])
             
             if reference_tags and song_tags:
                 overlap = len(reference_tags & song_tags) / max(1, len(reference_tags | song_tags))
-                if overlap < 0.2:  # 从0.3降低到0.2
-                    reason = f"标签重叠度低: {overlap:.2f}"
-                    dissimilar_songs.append({"id": song, "reason": reason})
-                    continue
+                if overlap < 0.2:
+                    similarity_score -= 0.15  # 标签重叠度低，相似度降低
+                    reasons.append(f"标签重叠度低: {overlap:.2f}")
             
-            # 6. 检查关键标签类别
+            # 7. 检查关键标签类别
             song_tag_categories = set()
             for tag in song_tags:
                 for category in important_categories:
@@ -574,16 +794,8 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
             
             category_diff = reference_tag_categories.symmetric_difference(song_tag_categories)
             if len(category_diff) > 1:
-                reason = f"关键标签类别不同: {', '.join(category_diff)}"
-                dissimilar_songs.append({"id": song, "reason": reason})
-                continue
-                    
-            # 7. 歌手优先判定
-            song_artist = track_features_map[song].get('artist', None)
-            if song_artist == reference_artist:
-                threshold = 2.0
-            else:
-                threshold = 1.5
+                similarity_score -= 0.15  # 关键标签类别不同，相似度降低
+                reasons.append(f"关键标签类别不同: {', '.join(category_diff)}")
                 
             # 8. 加权距离
             feature_vector = [
@@ -593,9 +805,19 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
                 features['valence']
             ]
             distance = np.linalg.norm((np.array(feature_vector) - reference_avg) * weights)
-            if distance > threshold:
-                reason = f"音频特征差异大: 距离值 {distance:.2f} > {threshold}"
-                dissimilar_songs.append({"id": song, "reason": reason})
+            if distance > 1.5:
+                similarity_score -= 0.2  # 音频特征差异大，相似度降低
+                reasons.append(f"音频特征差异大: 距离值 {distance:.2f} > 1.5")
+            
+            # 如果总相似度低于阈值，判定为显著不同
+            if similarity_score < 0.5:
+                # 组合所有原因
+                combined_reason = " | ".join(reasons)
+                dissimilar_songs.append({
+                    "id": song, 
+                    "reason": combined_reason,
+                    "similarity_score": round(similarity_score, 2)
+                })
     
     return dissimilar_songs
 
@@ -604,7 +826,7 @@ def compare_tags(tag_a, tag_b):
     comparison = {}
     
     # Compare basic tags
-    for key in ['energy', 'danceability', 'tempo', 'style', 'mood', 'popularity', 'genre_main', 'language', 'era']:
+    for key in ['energy', 'danceability', 'tempo', 'style', 'mood', 'popularity', 'genre_main', 'language', 'era', 'artist_era']:
         if key in tag_a and key in tag_b:
             comparison[key] = {
                 'tag_a': tag_a[key],
@@ -766,7 +988,8 @@ def api_filter_songs():
                     'id': song_key,
                     'name': track_features_map[song_key]['name'],
                     'artist': track_features_map[song_key]['artist'],
-                    'reason': song_item["reason"]
+                    'reason': song_item["reason"],
+                    'similarity_score': song_item.get("similarity_score", 0)
                 })
         
         return jsonify({
