@@ -294,16 +294,65 @@ def estimate_artist_era(artist_name):
     return None
 
 def search_track(track_name):
-    """Search for tracks on Last.fm"""
+    """Search for tracks on Last.fm with improved relevance"""
     try:
-        result = safe_api_call('track.search', {'track': track_name, 'limit': 5})
+        # 检查是否是在搜索歌手
+        artist_result = safe_api_call('artist.search', {'artist': track_name, 'limit': 1})
+        if ('results' in artist_result and 'artistmatches' in artist_result['results'] and 
+            'artist' in artist_result['results']['artistmatches']):
+            artist_matches = artist_result['results']['artistmatches']['artist']
+            if isinstance(artist_matches, dict):
+                artist_matches = [artist_matches]
+            
+            # 如果找到了精确匹配的歌手，搜索该歌手的热门歌曲
+            for artist in artist_matches:
+                if artist.get('name', '').lower() == track_name.lower():
+                    logger.info(f"找到精确匹配的歌手: {artist.get('name')}")
+                    # 获取该歌手的热门歌曲
+                    top_tracks = safe_api_call('artist.getTopTracks', {'artist': artist.get('name'), 'limit': 5})
+                    if 'toptracks' in top_tracks and 'track' in top_tracks['toptracks']:
+                        tracks = top_tracks['toptracks']['track']
+                        if isinstance(tracks, dict):
+                            tracks = [tracks]
+                        
+                        # 转换为标准格式
+                        results = []
+                        for track in tracks:
+                            results.append({
+                                'name': track.get('name', ''),
+                                'artist': artist.get('name', ''),
+                                'listeners': track.get('listeners', '0')
+                            })
+                        return results
+        
+        # 常规歌曲搜索
+        result = safe_api_call('track.search', {'track': track_name, 'limit': 10})
         
         if 'results' in result and 'trackmatches' in result['results'] and 'track' in result['results']['trackmatches']:
             tracks = result['results']['trackmatches']['track']
             # Last.fm might return a single dict for one result, convert to list
             if isinstance(tracks, dict):
                 tracks = [tracks]
-            return tracks
+            
+            # 对结果进行排序：完全匹配 > 开头匹配 > 包含匹配
+            exact_matches = []
+            starts_with_matches = []
+            contains_matches = []
+            
+            for track in tracks:
+                track_name_lower = track.get('name', '').lower()
+                search_term_lower = track_name.lower()
+                
+                if track_name_lower == search_term_lower:
+                    exact_matches.append(track)
+                elif track_name_lower.startswith(search_term_lower):
+                    starts_with_matches.append(track)
+                else:
+                    contains_matches.append(track)
+            
+            # 按优先级合并结果
+            sorted_tracks = exact_matches + starts_with_matches + contains_matches
+            return sorted_tracks[:10]  # 返回前10个结果，后面会进一步筛选
         return []
     except Exception as e:
         logger.error(f"Error searching track: {e}")
@@ -741,39 +790,53 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
             similarity_score = 1.0
             reasons = []
             
-            # 按照权重顺序判断: 语言 > 曲风 > 其他 (年代作为辅助因素)
+            # 歌手不同的情况下，优先考虑语言和时代
+            artist_era = features.get('artist_era')
+            song_language = features.get('language', 'unknown')
             
-            # 1. 语言不同 (权重最高)
-            if features.get('language', 'unknown') != reference_language and reference_language != 'unknown' and features.get('language', 'unknown') != 'unknown':
-                similarity_score -= 0.5  # 语言不同，相似度大幅降低
-                reasons.append(f"语言不同: {features.get('language', 'unknown')} vs {reference_language}")
+            # 语言相似度判断（高权重）
+            if song_language != reference_language and reference_language != 'unknown' and song_language != 'unknown':
+                similarity_score -= 0.4  # 语言不同，相似度大幅降低
+                reasons.append(f"语言不同: {song_language} vs {reference_language}")
+            else:
+                # 语言相同，增加相似度
+                if song_language != 'unknown' and reference_language != 'unknown':
+                    similarity_score += 0.1
+                    reasons.append(f"语言相同: {song_language}")
             
-            # 2. 主风格不同
+            # 歌手时代相似度判断（高权重）
+            if artist_era and reference_artist_era:
+                era_diff = abs(artist_era - reference_artist_era)
+                if era_diff <= 20:
+                    # 时代相近，增加相似度
+                    similarity_score += 0.1
+                    reasons.append(f"歌手时代相近: {artist_era} vs {reference_artist_era} (相差{era_diff}年)")
+                elif era_diff > 20:
+                    # 时代差距大，降低相似度
+                    similarity_score -= 0.3
+                    reasons.append(f"歌手时代差距大: {artist_era} vs {reference_artist_era} (相差{era_diff}年)")
+            
+            # 主风格相似度判断
             if features.get('genre_main', 'unknown') != reference_genre_main and reference_genre_main != 'unknown' and features.get('genre_main', 'unknown') != 'unknown':
-                similarity_score -= 0.3  # 主风格不同，相似度降低
+                similarity_score -= 0.2  # 主风格不同，相似度降低
                 reasons.append(f"主风格不同: {features.get('genre_main', 'unknown')} vs {reference_genre_main}")
+            else:
+                # 主风格相同，增加相似度
+                if features.get('genre_main', 'unknown') != 'unknown' and reference_genre_main != 'unknown':
+                    similarity_score += 0.05
+                    reasons.append(f"主风格相同: {features.get('genre_main', 'unknown')}")
                 
-            # 3. 子风格不同
+            # 子风格相似度判断
             if features.get('genre', 'unknown') != reference_genre and reference_genre != 'unknown' and features.get('genre', 'unknown') != 'unknown':
-                similarity_score -= 0.2  # 子风格不同，相似度略微降低
+                similarity_score -= 0.1  # 子风格不同，相似度略微降低
                 reasons.append(f"子风格不同: {features.get('genre', 'unknown')} vs {reference_genre}")
             
-            # 4. 时代不同
+            # 时代相似度判断
             if features.get('era', 'unknown') != reference_era and reference_era != 'unknown' and features.get('era', 'unknown') != 'unknown':
                 similarity_score -= 0.1  # 时代不同，相似度略微降低
                 reasons.append(f"时代不同: {features.get('era', 'unknown')} vs {reference_era}")
                 
-            # 5. 歌手年代差距 (作为辅助因素)
-            artist_era = features.get('artist_era')
-            if artist_era and reference_artist_era:
-                era_similarity = calculate_era_similarity_score(artist_era, reference_artist_era)
-                # 年代相似度影响总相似度，但权重较低
-                era_diff = abs(artist_era - reference_artist_era)
-                if era_diff > 30:
-                    similarity_score -= 0.1  # 年代差距大，轻微降低相似度
-                    reasons.append(f"歌手年代差距较大: {artist_era} vs {reference_artist_era} (相差{era_diff}年)")
-                
-            # 6. 标签重叠度判定
+            # 标签重叠度判定
             song_tags = set()
             if 'tags' in features and isinstance(features['tags'], list):
                 song_tags = set([t['name'].lower() for t in features['tags'] if 'name' in t])
@@ -781,10 +844,10 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
             if reference_tags and song_tags:
                 overlap = len(reference_tags & song_tags) / max(1, len(reference_tags | song_tags))
                 if overlap < 0.2:
-                    similarity_score -= 0.15  # 标签重叠度低，相似度降低
+                    similarity_score -= 0.1  # 标签重叠度低，相似度降低
                     reasons.append(f"标签重叠度低: {overlap:.2f}")
             
-            # 7. 检查关键标签类别
+            # 检查关键标签类别
             song_tag_categories = set()
             for tag in song_tags:
                 for category in important_categories:
@@ -794,10 +857,10 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
             
             category_diff = reference_tag_categories.symmetric_difference(song_tag_categories)
             if len(category_diff) > 1:
-                similarity_score -= 0.15  # 关键标签类别不同，相似度降低
+                similarity_score -= 0.1  # 关键标签类别不同，相似度降低
                 reasons.append(f"关键标签类别不同: {', '.join(category_diff)}")
                 
-            # 8. 加权距离
+            # 加权距离
             feature_vector = [
                 features['danceability'], features['energy'], 
                 features['speechiness'], features['acousticness'], 
@@ -806,7 +869,7 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
             ]
             distance = np.linalg.norm((np.array(feature_vector) - reference_avg) * weights)
             if distance > 1.5:
-                similarity_score -= 0.2  # 音频特征差异大，相似度降低
+                similarity_score -= 0.15  # 音频特征差异大，相似度降低
                 reasons.append(f"音频特征差异大: 距离值 {distance:.2f} > 1.5")
             
             # 如果总相似度低于阈值，判定为显著不同
@@ -863,7 +926,7 @@ def api_status():
 
 @app.route('/api/search_track', methods=['POST'])
 def api_search_track():
-    """Search for tracks and return results"""
+    """Search for tracks and return results with improved relevance"""
     query = request.json.get('query', '')
     if not query:
         return jsonify({'success': False, 'error': 'No search query provided'})
@@ -871,16 +934,9 @@ def api_search_track():
     try:
         tracks = search_track(query)
         results = []
-
-        # 先筛选歌名完全等于query的（忽略大小写）
-        exact_matches = [
-            track for track in tracks
-            if track.get('name', '').strip().lower() == query.strip().lower()
-        ]
-        # 如果有完全匹配，优先返回这些
-        filtered_tracks = exact_matches if exact_matches else tracks
-
-        for track in filtered_tracks[:5]:
+        
+        # 限制返回5个最相关的结果
+        for track in tracks[:5]:
             track_name = track.get('name', '')
             artist_name = track.get('artist', '')
             results.append({
