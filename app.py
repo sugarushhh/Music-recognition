@@ -9,6 +9,11 @@ import json
 from collections import Counter
 import time
 import html
+import logging
+
+# 配置日志
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
@@ -32,21 +37,54 @@ GENRE_MAIN_CLASS = {
     'pop': 'pop',
     'dance': 'pop',
     'synthpop': 'pop',
+    'electropop': 'pop',
+    'k-pop': 'pop',
+    'j-pop': 'pop',
     'rock': 'rock',
     'classic rock': 'rock',
     'hard rock': 'rock',
     'metal': 'rock',
     'punk': 'rock',
+    'alternative rock': 'rock',
+    'indie rock': 'rock',
     'jazz': 'jazz',
     'blues': 'jazz',
     'hip hop': 'hiphop',
     'hiphop': 'hiphop',
     'rap': 'hiphop',
+    'trap': 'hiphop',
     'classical': 'classical',
+    'orchestra': 'classical',
     'folk': 'folk',
     'country': 'folk',
     'electronic': 'electronic',
-    # ...可继续补充...
+    'edm': 'electronic',
+    'techno': 'electronic',
+    'house': 'electronic',
+    'trance': 'electronic',
+    'dubstep': 'electronic',
+    'r&b': 'rnb',
+    'rnb': 'rnb',
+    'soul': 'rnb',
+    'funk': 'rnb',
+    'reggae': 'reggae',
+    'latin': 'latin',
+    'salsa': 'latin',
+    'flamenco': 'latin',
+    'indie': 'indie',
+    'alternative': 'alternative',
+}
+
+# 添加时代映射
+ERA_MAPPING = {
+    '50s': '1950s',
+    '60s': '1960s',
+    '70s': '1970s',
+    '80s': '1980s',
+    '90s': '1990s',
+    '2000s': '2000s',
+    '2010s': '2010s',
+    '2020s': '2020s',
 }
 
 def safe_api_call(method, params, retries=MAX_RETRIES):
@@ -62,13 +100,13 @@ def safe_api_call(method, params, retries=MAX_RETRIES):
             return response.json()
         except requests.exceptions.RequestException as e:
             if attempt < retries - 1:
-                print(f"API call failed, retrying ({attempt+1}/{retries}): {e}")
+                logger.warning(f"API call failed, retrying ({attempt+1}/{retries}): {e}")
                 time.sleep(RETRY_DELAY)
             else:
-                print(f"API call failed after multiple retries: {e}")
+                logger.error(f"API call failed after multiple retries: {e}")
                 raise
         except Exception as e:
-            print(f"Other API error: {e}")
+            logger.error(f"Other API error: {e}")
             raise
 
 def is_api_available():
@@ -78,7 +116,7 @@ def is_api_available():
         result = safe_api_call('chart.getTopArtists', {'limit': 1})
         return True
     except Exception as e:
-        print(f"API unavailable: {e}")
+        logger.error(f"API unavailable: {e}")
         return False
 
 def get_track_info(track_name, artist_name=None):
@@ -91,7 +129,7 @@ def get_track_info(track_name, artist_name=None):
         result = safe_api_call('track.getInfo', params)
         return result
     except Exception as e:
-        print(f"Error getting track info: {e}")
+        logger.error(f"Error getting track info: {e}")
         return None
 
 def search_track(track_name):
@@ -107,7 +145,7 @@ def search_track(track_name):
             return tracks
         return []
     except Exception as e:
-        print(f"Error searching track: {e}")
+        logger.error(f"Error searching track: {e}")
         return []
 
 def get_track_tags(track_name, artist_name):
@@ -123,7 +161,7 @@ def get_track_tags(track_name, artist_name):
             return tags
         return []
     except Exception as e:
-        print(f"Error getting track tags: {e}")
+        logger.error(f"Error getting track tags: {e}")
         return []
 
 def get_similar_tracks(track_name, artist_name):
@@ -139,7 +177,7 @@ def get_similar_tracks(track_name, artist_name):
             return similar_tracks
         return []
     except Exception as e:
-        print(f"Error getting similar tracks: {e}")
+        logger.error(f"Error getting similar tracks: {e}")
         return []
 
 def extract_track_features(track_info):
@@ -153,6 +191,12 @@ def extract_track_features(track_info):
     
     tags = get_track_tags(track_name, artist_name)
     
+    # 调试信息：打印获取到的标签
+    logger.info(f"处理歌曲: {track_name} - {artist_name}")
+    logger.info(f"获取到的标签数量: {len(tags)}")
+    for tag in tags[:10]:  # 打印前10个标签
+        logger.info(f"  - {tag.get('name', '')}")
+    
     # Initialize features with default values
     features = {
         'danceability': 0.5,
@@ -165,39 +209,102 @@ def extract_track_features(track_info):
         'tempo': 120,  # Default tempo
         'genre': 'unknown',
         'language': 'unknown',
+        'era': 'unknown',  # 添加时代特征
     }
     
     # Map common tags to musical features, genre, and language
     tag_mapping = {
+        # 舞曲特性
         'dance': ('danceability', 0.8),
         'danceable': ('danceability', 0.8),
         'edm': ('danceability', 0.9),
+        'club': ('danceability', 0.8),
+        'party': ('danceability', 0.7),
+        
+        # 能量特性
         'energetic': ('energy', 0.9),
         'high energy': ('energy', 0.9),
         'powerful': ('energy', 0.8),
+        'intense': ('energy', 0.9),
         'calm': ('energy', 0.2),
         'chill': ('energy', 0.3),
         'relaxing': ('energy', 0.2),
+        'mellow': ('energy', 0.3),
+        'soft': ('energy', 0.2),
+        
+        # 原声特性
         'acoustic': ('acousticness', 0.9),
+        'unplugged': ('acousticness', 0.8),
+        'live acoustic': ('acousticness', 0.9),
+        
+        # 器乐特性
         'instrumental': ('instrumentalness', 0.9),
+        'no vocals': ('instrumentalness', 0.9),
+        'orchestra': ('instrumentalness', 0.8),
+        
+        # 现场特性
         'live': ('liveness', 0.9),
+        'concert': ('liveness', 0.8),
+        'recorded live': ('liveness', 0.9),
+        
+        # 情感特性
         'happy': ('valence', 0.9),
         'sad': ('valence', 0.2),
         'melancholy': ('valence', 0.3),
+        'uplifting': ('valence', 0.8),
+        'dark': ('valence', 0.2),
+        'emotional': ('valence', 0.4),
+        'upbeat': ('valence', 0.8),
+        
+        # 语音特性
         'rap': ('speechiness', 0.9),
         'spoken word': ('speechiness', 0.9),
+        'talking': ('speechiness', 0.8),
+        'vocals': ('speechiness', 0.7),
+        
+        # 速度特性
         'fast': ('tempo', 160),
         'slow': ('tempo', 80),
-        # genre
+        'medium tempo': ('tempo', 120),
+        
+        # 流派
         'pop': ('genre', 'pop'),
         'rock': ('genre', 'rock'),
         'jazz': ('genre', 'jazz'),
         'blues': ('genre', 'blues'),
         'hip hop': ('genre', 'hiphop'),
+        'hip-hop': ('genre', 'hiphop'),
+        'rap': ('genre', 'hiphop'),
         'classical': ('genre', 'classical'),
         'metal': ('genre', 'metal'),
         'folk': ('genre', 'folk'),
-        # language
+        'country': ('genre', 'country'),
+        'electronic': ('genre', 'electronic'),
+        'edm': ('genre', 'electronic'),
+        'techno': ('genre', 'electronic'),
+        'house': ('genre', 'electronic'),
+        'trance': ('genre', 'electronic'),
+        'dubstep': ('genre', 'electronic'),
+        'r&b': ('genre', 'rnb'),
+        'rnb': ('genre', 'rnb'),
+        'soul': ('genre', 'rnb'),
+        'funk': ('genre', 'rnb'),
+        'reggae': ('genre', 'reggae'),
+        'latin': ('genre', 'latin'),
+        'salsa': ('genre', 'latin'),
+        'flamenco': ('genre', 'latin'),
+        'indie': ('genre', 'indie'),
+        'alternative': ('genre', 'alternative'),
+        'punk': ('genre', 'punk'),
+        'grunge': ('genre', 'grunge'),
+        'disco': ('genre', 'disco'),
+        'k-pop': ('genre', 'k-pop'),
+        'j-pop': ('genre', 'j-pop'),
+        'c-pop': ('genre', 'c-pop'),
+        'mandopop': ('genre', 'c-pop'),
+        'cantopop': ('genre', 'c-pop'),
+        
+        # 语言
         'english': ('language', 'english'),
         'chinese': ('language', 'chinese'),
         'mandarin': ('language', 'chinese'),
@@ -210,6 +317,27 @@ def extract_track_features(track_info):
         'italian': ('language', 'italian'),
         'russian': ('language', 'russian'),
         'portuguese': ('language', 'portuguese'),
+        'hindi': ('language', 'hindi'),
+        'arabic': ('language', 'arabic'),
+        'turkish': ('language', 'turkish'),
+        'thai': ('language', 'thai'),
+        'vietnamese': ('language', 'vietnamese'),
+        
+        # 时代
+        '50s': ('era', '1950s'),
+        '60s': ('era', '1960s'),
+        '70s': ('era', '1970s'),
+        '80s': ('era', '1980s'),
+        '90s': ('era', '1990s'),
+        '2000s': ('era', '2000s'),
+        '2010s': ('era', '2010s'),
+        '2020s': ('era', '2020s'),
+        'oldies': ('era', 'oldies'),
+        'classic': ('era', 'classic'),
+        'retro': ('era', 'retro'),
+        'vintage': ('era', 'vintage'),
+        'modern': ('era', 'modern'),
+        'contemporary': ('era', 'contemporary'),
     }
     
     # Extract tag names and count
@@ -239,6 +367,12 @@ def extract_track_features(track_info):
     
     # 保存原始标签列表用于重叠度判定
     features['tags'] = tags
+    
+    # 调试信息：打印提取的特征
+    logger.info("提取的特征:")
+    for key, value in features.items():
+        if key != 'tags':  # 不打印完整标签列表
+            logger.info(f"  - {key}: {value}")
     
     return features
 
@@ -300,6 +434,27 @@ def analyze_music_features(features_list):
     else:
         tags['popularity'] = 'moderate'
     
+    # 添加主要流派和语言
+    genre_counter = Counter()
+    language_counter = Counter()
+    era_counter = Counter()
+    
+    for features in features_list:
+        if 'genre_main' in features and features['genre_main'] != 'unknown':
+            genre_counter[features['genre_main']] += 1
+        if 'language' in features and features['language'] != 'unknown':
+            language_counter[features['language']] += 1
+        if 'era' in features and features['era'] != 'unknown':
+            era_counter[features['era']] += 1
+    
+    # 添加最常见的流派、语言和时代
+    if genre_counter:
+        tags['genre_main'] = genre_counter.most_common(1)[0][0]
+    if language_counter:
+        tags['language'] = language_counter.most_common(1)[0][0]
+    if era_counter:
+        tags['era'] = era_counter.most_common(1)[0][0]
+    
     # Add average features
     tags['avg_features'] = avg_features
     
@@ -315,8 +470,10 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
     reference_genre_main = None
     reference_genre = None
     reference_language = None
+    reference_era = None
     reference_artist = None
     reference_tags = None
+    
     for song in reference_songs:
         if song in track_features_map:
             features = track_features_map[song]['features']
@@ -327,12 +484,16 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
                 features['valence']
             ]
             reference_features.append(feature_vector)
+            
+            # 收集参考组的特征
             if reference_genre_main is None:
                 reference_genre_main = features.get('genre_main', 'unknown')
             if reference_genre is None:
                 reference_genre = features.get('genre', 'unknown')
             if reference_language is None:
                 reference_language = features.get('language', 'unknown')
+            if reference_era is None:
+                reference_era = features.get('era', 'unknown')
             if reference_artist is None:
                 reference_artist = track_features_map[song].get('artist', None)
             if reference_tags is None:
@@ -343,11 +504,22 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
     if not reference_features:
         return []
     
+    # 收集参考组的关键标签类别
+    reference_tag_categories = set()
+    important_categories = ['rock', 'pop', 'jazz', 'classical', 'hiphop', 'electronic', 'metal', 
+                           'folk', 'rnb', 'reggae', 'latin', 'indie', 'alternative']
+    
+    for tag in reference_tags:
+        for category in important_categories:
+            if category in tag:
+                reference_tag_categories.add(category)
+                break
+    
     # Calculate reference group average vector
     reference_avg = np.mean(reference_features, axis=0)
     
-    # 加权向量
-    weights = np.array([1.0, 1.0, 0.5, 0.5, 0.5, 0.5, 1.0])
+    # 加权向量 - 增加能量和情感的权重
+    weights = np.array([1.2, 1.5, 0.8, 0.8, 0.8, 0.8, 1.5])
     
     # Calculate similarity for each candidate song
     dissimilar_songs = []
@@ -356,38 +528,64 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
             features = track_features_map[song]['features']
             reason = None
             
-            # 1. 主风格不同直接 dissimilar
-            if features.get('genre_main', 'unknown') != reference_genre_main and reference_genre_main != 'unknown':
+            # 1. 语言不同
+            if features.get('language', 'unknown') != reference_language and reference_language != 'unknown' and features.get('language', 'unknown') != 'unknown':
+                reason = f"语言不同: {features.get('language', 'unknown')} vs {reference_language}"
+                dissimilar_songs.append({"id": song, "reason": reason})
+                continue
+            
+            # 2. 时代不同
+            if features.get('era', 'unknown') != reference_era and reference_era != 'unknown' and features.get('era', 'unknown') != 'unknown':
+                reason = f"时代不同: {features.get('era', 'unknown')} vs {reference_era}"
+                dissimilar_songs.append({"id": song, "reason": reason})
+                continue
+            
+            # 3. 主风格不同
+            if features.get('genre_main', 'unknown') != reference_genre_main and reference_genre_main != 'unknown' and features.get('genre_main', 'unknown') != 'unknown':
                 reason = f"主风格不同: {features.get('genre_main', 'unknown')} vs {reference_genre_main}"
                 dissimilar_songs.append({"id": song, "reason": reason})
                 continue
                 
-            # 2. 子风格不同也 dissimilar
-            if features.get('genre', 'unknown') != reference_genre and reference_genre != 'unknown':
+            # 4. 子风格不同
+            if features.get('genre', 'unknown') != reference_genre and reference_genre != 'unknown' and features.get('genre', 'unknown') != 'unknown':
                 reason = f"子风格不同: {features.get('genre', 'unknown')} vs {reference_genre}"
                 dissimilar_songs.append({"id": song, "reason": reason})
                 continue
                 
-            # 3. 标签重叠度判定
+            # 5. 标签重叠度判定 - 降低阈值
             song_tags = set()
             if 'tags' in features and isinstance(features['tags'], list):
                 song_tags = set([t['name'].lower() for t in features['tags'] if 'name' in t])
             
             if reference_tags and song_tags:
                 overlap = len(reference_tags & song_tags) / max(1, len(reference_tags | song_tags))
-                if overlap < 0.3:
+                if overlap < 0.2:  # 从0.3降低到0.2
                     reason = f"标签重叠度低: {overlap:.2f}"
                     dissimilar_songs.append({"id": song, "reason": reason})
                     continue
+            
+            # 6. 检查关键标签类别
+            song_tag_categories = set()
+            for tag in song_tags:
+                for category in important_categories:
+                    if category in tag:
+                        song_tag_categories.add(category)
+                        break
+            
+            category_diff = reference_tag_categories.symmetric_difference(song_tag_categories)
+            if len(category_diff) > 1:
+                reason = f"关键标签类别不同: {', '.join(category_diff)}"
+                dissimilar_songs.append({"id": song, "reason": reason})
+                continue
                     
-            # 4. 歌手优先判定
+            # 7. 歌手优先判定
             song_artist = track_features_map[song].get('artist', None)
             if song_artist == reference_artist:
                 threshold = 2.0
             else:
                 threshold = 1.5
                 
-            # 5. 加权距离
+            # 8. 加权距离
             feature_vector = [
                 features['danceability'], features['energy'], 
                 features['speechiness'], features['acousticness'], 
@@ -406,7 +604,7 @@ def compare_tags(tag_a, tag_b):
     comparison = {}
     
     # Compare basic tags
-    for key in ['energy', 'danceability', 'tempo', 'style', 'mood', 'popularity', 'genre_main', 'language']:
+    for key in ['energy', 'danceability', 'tempo', 'style', 'mood', 'popularity', 'genre_main', 'language', 'era']:
         if key in tag_a and key in tag_b:
             comparison[key] = {
                 'tag_a': tag_a[key],
@@ -471,6 +669,7 @@ def api_search_track():
         
         return jsonify({'success': True, 'results': results})
     except Exception as e:
+        logger.error(f"搜索歌曲时出错: {str(e)}")
         return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/api/process_track', methods=['POST'])
@@ -510,6 +709,7 @@ def api_process_track():
             'features': features
         })
     except Exception as e:
+        logger.error(f"处理歌曲时出错: {str(e)}")
         return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/api/analyze_group', methods=['POST'])
@@ -541,6 +741,7 @@ def api_analyze_group():
         
         return jsonify({'success': True, 'tags': tags})
     except Exception as e:
+        logger.error(f"分析歌曲组时出错: {str(e)}")
         return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/api/filter_songs', methods=['POST'])
@@ -575,6 +776,7 @@ def api_filter_songs():
             'filtered_count': len(filtered_songs)
         })
     except Exception as e:
+        logger.error(f"筛选歌曲时出错: {str(e)}")
         return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/api/compare_groups', methods=['POST'])
@@ -591,6 +793,7 @@ def api_compare_groups():
             'comparison': comparison
         })
     except Exception as e:
+        logger.error(f"比较歌曲组时出错: {str(e)}")
         return jsonify({'success': False, 'error': str(e)})
 
 if __name__ == '__main__':
