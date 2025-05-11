@@ -718,7 +718,6 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
         if song in track_features_map:
             artist_name = track_features_map[song].get('artist', None)
             if artist_name:
-                # 将歌手名转为小写并添加到集合中
                 reference_artists.add(artist_name.lower())
     
     logger.info(f"参考组(A组)包含的歌手: {', '.join(reference_artists)}")
@@ -773,18 +772,18 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
                 same_artist = True
                 similarity_score += 0.3  # 大幅提高同一歌手的相似度
             
-            # 2. 判断语言差异 - 语言不同作为高权重判定依据
+            # 2. 判断语言差异 - 语言不同作为最高权重判定依据
             song_language = features.get('language', 'unknown')
             language_different = False
             if song_language != reference_language and reference_language != 'unknown' and song_language != 'unknown':
                 language_different = True
-                # 如果不是同一歌手，语言不同则大幅降低相似度
+                # 如果不是同一歌手，语言不同则极大降低相似度
                 if not same_artist:
-                    similarity_score -= 0.6  # 显著增加语言不同的权重
+                    similarity_score -= 0.8  # 显著增加语言不同的权重，几乎确保被判为不同
                     reasons.append(f"语言不同: {song_language} vs {reference_language}")
                 else:
-                    # 即使是同一歌手，语言不同也适当降低相似度
-                    similarity_score -= 0.2
+                    # 即使是同一歌手，语言不同也显著降低相似度
+                    similarity_score -= 0.4  # 增加权重
                     reasons.append(f"同一歌手但语言不同: {song_language} vs {reference_language}")
             
             # 3. 判断歌手时代差异
@@ -805,16 +804,25 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
                         similarity_score -= 0.2  # 叠加效应
                         reasons.append(f"语言不同且时代差距大: {artist_era} vs {reference_artist_era} (相差{era_diff}年)")
             
-            # 4. 判断主风格差异 - 作为低权重判定依据
+            # 4. 判断主风格差异 - 增强对不同风格的判断
             if features.get('genre_main', 'unknown') != reference_genre_main and reference_genre_main != 'unknown' and features.get('genre_main', 'unknown') != 'unknown':
-                # 如果语言相同且时代相似，曲风作为低权重判定
-                if not language_different and era_similar:
-                    similarity_score -= 0.2
-                    reasons.append(f"语言时代相似但主风格不同: {features.get('genre_main', 'unknown')} vs {reference_genre_main}")
+                # 特别处理电子音乐、摇滚等明显不同风格
+                if (features.get('genre_main') in ['electronic', 'edm', 'techno', 'house', 'trance', 'dubstep'] and 
+                    reference_genre_main not in ['electronic', 'edm', 'techno', 'house', 'trance', 'dubstep']):
+                    similarity_score -= 0.5  # 电子音乐与非电子音乐差异很大
+                    reasons.append(f"电子音乐与其他风格差异大: {features.get('genre_main')} vs {reference_genre_main}")
+                elif (features.get('genre_main') in ['rock', 'metal', 'punk', 'hard rock'] and 
+                      reference_genre_main not in ['rock', 'metal', 'punk', 'hard rock']):
+                    similarity_score -= 0.5  # 摇滚与非摇滚差异很大
+                    reasons.append(f"摇滚音乐与其他风格差异大: {features.get('genre_main')} vs {reference_genre_main}")
+                # 如果语言相同且时代相似，曲风作为中等权重判定
+                elif not language_different and era_similar:
+                    similarity_score -= 0.3  # 增加权重
+                    reasons.append(f"语言时代相似但主风格不同: {features.get('genre_main')} vs {reference_genre_main}")
                 # 如果语言相同但时代不相似，曲风作为高权重判定
                 elif not language_different and not era_similar:
-                    similarity_score -= 0.4
-                    reasons.append(f"语言相同时代不同且主风格不同: {features.get('genre_main', 'unknown')} vs {reference_genre_main}")
+                    similarity_score -= 0.5  # 增加权重
+                    reasons.append(f"语言相同时代不同且主风格不同: {features.get('genre_main')} vs {reference_genre_main}")
             
             # 5. 音乐特征向量距离判断 - 作为辅助判定
             feature_vector = [
@@ -827,20 +835,26 @@ def filter_dissimilar_songs(reference_songs, candidate_songs):
             
             # 根据不同情况调整特征距离的权重
             if distance > 1.5:
-                # 如果语言相同且时代相似，特征距离作为低权重判定
+                # 如果语言相同且时代相似，特征距离作为中等权重判定
                 if not language_different and era_similar:
-                    similarity_score -= min(0.2, distance * 0.05)
+                    similarity_score -= min(0.3, distance * 0.08)  # 增加权重
                 # 如果语言相同但时代不相似，特征距离作为高权重判定
                 elif not language_different and not era_similar:
-                    similarity_score -= min(0.3, distance * 0.1)
+                    similarity_score -= min(0.4, distance * 0.12)  # 增加权重
                 # 如果语言不同，特征距离作为辅助判定
                 elif language_different:
-                    similarity_score -= min(0.1, distance * 0.03)
+                    similarity_score -= min(0.2, distance * 0.05)  # 增加权重
                 
                 reasons.append(f"音乐特征差异大: 距离值 {distance:.2f}")
             
-            # 6. 判断是否为显著不同
-            if similarity_score < 0.6:  # 阈值可以根据需要调整
+            # 6. 能量水平对比 - 特别处理高能量与低能量歌曲的差异
+            energy_diff = abs(features.get('energy', 0.5) - reference_features[0][1])
+            if energy_diff > 0.4:
+                similarity_score -= 0.3  # 增加权重
+                reasons.append(f"能量水平差异大: {features.get('energy', 0.5):.2f} vs {reference_features[0][1]:.2f}")
+            
+            # 7. 判断是否为显著不同
+            if similarity_score < 0.65:  # 提高阈值，更容易判定为不同
                 combined_reason = " | ".join(reasons)
                 dissimilar_songs.append({
                     "id": song, 
